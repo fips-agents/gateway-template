@@ -1,11 +1,11 @@
 # Stage 1: Build
 FROM registry.redhat.io/ubi9/go-toolset:1.22 AS builder
 
-WORKDIR /build
+WORKDIR /opt/app-root/src
 COPY go.mod ./
 COPY cmd/ cmd/
 COPY internal/ internal/
-RUN go build -o /gateway ./cmd/server
+RUN go build -o ./gateway ./cmd/server
 
 # Stage 2: Runtime
 FROM registry.redhat.io/ubi9/ubi-minimal:latest
@@ -15,7 +15,7 @@ LABEL io.opencontainers.image.title="gateway-template" \
       io.opencontainers.image.description="OpenAI-compatible HTTP gateway for AI agents" \
       io.opencontainers.image.vendor="Red Hat AI Americas"
 
-COPY --from=builder /gateway /gateway
+COPY --from=builder /opt/app-root/src/gateway /gateway
 
 USER 1001
 EXPOSE 8080
