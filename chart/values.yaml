@@ -1,0 +1,26 @@
+replicaCount: 1
+
+image:
+  repository: gateway-template
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+config:
+  BACKEND_URL: http://my-agent:8080
+
+service:
+  port: 8080
+
+route:
+  enabled: true
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
