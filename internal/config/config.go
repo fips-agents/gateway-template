@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Config holds the gateway configuration loaded from environment variables.
@@ -11,6 +12,7 @@ type Config struct {
 	BackendURL   string
 	AgentName    string
 	AgentVersion string
+	LogRequests  bool
 }
 
 // Load reads configuration from environment variables and validates required fields.
@@ -20,6 +22,7 @@ func Load() (*Config, error) {
 		BackendURL:   os.Getenv("BACKEND_URL"),
 		AgentName:    envOrDefault("AGENT_NAME", "gateway-template"),
 		AgentVersion: envOrDefault("AGENT_VERSION", "0.1.0"),
+		LogRequests:  envBool("LOG_REQUESTS"),
 	}
 
 	if cfg.BackendURL == "" {
@@ -34,4 +37,9 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envBool(key string) bool {
+	v := strings.ToLower(os.Getenv(key))
+	return v == "true" || v == "1" || v == "yes"
 }

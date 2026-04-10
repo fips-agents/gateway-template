@@ -12,6 +12,7 @@ import (
 
 	"github.com/redhat-ai-americas/gateway-template/internal/config"
 	"github.com/redhat-ai-americas/gateway-template/internal/handler"
+	"github.com/redhat-ai-americas/gateway-template/internal/middleware"
 )
 
 func main() {
@@ -40,9 +41,14 @@ func main() {
 		AgentVersion: cfg.AgentVersion,
 	})
 
+	var handler http.Handler = mux
+	if cfg.LogRequests {
+		handler = middleware.LogRequests(handler)
+	}
+
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
