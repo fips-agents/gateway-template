@@ -3,7 +3,7 @@ IMAGE_NAME  ?= gateway-template
 IMAGE_TAG   ?= latest
 PORT        ?= 8080
 
-.PHONY: build run test lint image-build deploy clean help
+.PHONY: build run test lint image-build build-openshift deploy clean help
 
 build:          ## Build the gateway binary
 	go build -o bin/server ./cmd/server
@@ -20,8 +20,19 @@ lint:           ## Run go vet
 image-build:    ## Build container image
 	podman build --platform linux/amd64 -t $(IMAGE_NAME):$(IMAGE_TAG) -f Containerfile . --no-cache
 
-deploy:         ## Deploy to OpenShift
-	./deploy.sh $(PROJECT)
+build-openshift: ## Build on OpenShift via BuildConfig (make build-openshift PROJECT=<ns>)
+	@if ! oc get bc $(PROJECT) -n $(PROJECT) &>/dev/null; then \
+		echo "Creating BuildConfig and ImageStream in $(PROJECT)..."; \
+		sed 's/PLACEHOLDER/$(PROJECT)/g' build/buildconfig.yaml | oc apply -n $(PROJECT) -f -; \
+	fi
+	oc start-build $(PROJECT) --from-dir=. -n $(PROJECT) --follow
+
+deploy:         ## Deploy to OpenShift via Helm (make deploy PROJECT=<ns>)
+	helm upgrade --install $(PROJECT) chart/ \
+		-n $(PROJECT) \
+		--set image.repository=image-registry.openshift-image-registry.svc:5000/$(PROJECT)/$(PROJECT) \
+		--set image.tag=latest \
+		--wait
 
 clean:          ## Remove build artifacts
 	rm -rf bin/
