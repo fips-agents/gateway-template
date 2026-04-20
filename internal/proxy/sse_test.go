@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/redhat-ai-americas/gateway-template/internal/proxy"
+	"github.com/fips-agents/gateway-template/internal/proxy"
 )
 
 // fakeResponse builds an *http.Response whose Body reads from the given string.

@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/redhat-ai-americas/gateway-template/internal/proxy"
+	"github.com/fips-agents/gateway-template/internal/proxy"
 )
 
 // ChatHandler proxies OpenAI-compatible /v1/chat/completions requests to a

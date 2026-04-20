@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/redhat-ai-americas/gateway-template/internal/handler"
+	"github.com/fips-agents/gateway-template/internal/handler"
 )
 
 func TestWellKnownHandler(t *testing.T) {

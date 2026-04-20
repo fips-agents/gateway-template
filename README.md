@@ -46,7 +46,7 @@ helm upgrade --install my-gateway chart/ \
 
 ## Scaffolding
 
-This repository is a template used by [fips-agents-cli](https://github.com/rdwj/fips-agents-cli). To create a new gateway project:
+This repository is a template used by [fips-agents-cli](https://github.com/fips-agents/fips-agents-cli). To create a new gateway project:
 
 ```bash
 fips-agents create gateway my-gateway-name
