@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -39,6 +40,17 @@ func main() {
 	mux.Handle("/.well-known/agent.json", &handler.WellKnownHandler{
 		AgentName:    cfg.AgentName,
 		AgentVersion: cfg.AgentVersion,
+	})
+	mux.HandleFunc("GET /v1/agent-info", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := client.Get(cfg.BackendURL + "/v1/agent-info")
+		if err != nil {
+			http.Error(w, "backend unreachable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
 	})
 
 	var handler http.Handler = mux
