@@ -1,3 +1,3 @@
-module github.com/redhat-ai-americas/gateway-template
+module github.com/fips-agents/gateway-template
 
 go 1.22

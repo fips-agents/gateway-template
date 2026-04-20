@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/redhat-ai-americas/gateway-template/internal/config"
-	"github.com/redhat-ai-americas/gateway-template/internal/handler"
-	"github.com/redhat-ai-americas/gateway-template/internal/middleware"
+	"github.com/fips-agents/gateway-template/internal/config"
+	"github.com/fips-agents/gateway-template/internal/handler"
+	"github.com/fips-agents/gateway-template/internal/middleware"
 )
 
 func main() {
