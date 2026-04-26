@@ -23,6 +23,7 @@ curl http://localhost:8080/healthz
 | `PORT` | No | `8080` | HTTP listen port |
 | `AGENT_NAME` | No | `gateway-template` | Agent name in `/.well-known/agent.json` |
 | `AGENT_VERSION` | No | `0.1.0` | Agent version in `/.well-known/agent.json` |
+| `LOG_REQUESTS` | No | `false` | Enable structured request logging (skips health probes) |
 
 ## Endpoints
 
@@ -31,6 +32,7 @@ curl http://localhost:8080/healthz
 | `/v1/chat/completions` | POST | OpenAI-compatible chat completions (sync + streaming) |
 | `/healthz` | GET | Liveness probe |
 | `/readyz` | GET | Readiness probe (checks backend connectivity) |
+| `/v1/agent-info` | GET | Pass-through to backend agent info (UI settings) |
 | `/.well-known/agent.json` | GET | Agent discovery card |
 
 ## Deployment

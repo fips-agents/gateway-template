@@ -25,12 +25,13 @@ make image-build
 
 ## Architecture
 
-This is a thin reverse proxy -- no business logic, no middleware frameworks. All code uses the Go standard library only.
+This is a thin reverse proxy -- no business logic, no external dependencies. All code uses the Go standard library only.
 
 ```
 Client --> Gateway (:8080) --> Backend Agent
              |
              +-- /v1/chat/completions  (POST, sync + SSE streaming)
+             +-- /v1/agent-info        (GET, pass-through to backend)
              +-- /healthz              (GET, liveness)
              +-- /readyz               (GET, checks backend)
              +-- /.well-known/agent.json (GET, agent card)
@@ -40,6 +41,7 @@ Key packages:
 - `cmd/server/` -- entry point, wiring, graceful shutdown
 - `internal/config/` -- environment variable parsing
 - `internal/handler/` -- HTTP handlers for each route
+- `internal/middleware/` -- request logging (structured, skips health probes)
 - `internal/proxy/` -- SSE relay logic
 
 ## Configuration
@@ -50,6 +52,7 @@ Key packages:
 | `PORT` | No | `8080` | Listen port |
 | `AGENT_NAME` | No | `gateway-template` | Name in agent card |
 | `AGENT_VERSION` | No | `0.1.0` | Version in agent card |
+| `LOG_REQUESTS` | No | `false` | Enable structured request logging |
 
 ## Deployment
 
