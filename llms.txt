@@ -13,6 +13,7 @@ This is a template repository. The sentinel string `gateway-template` is replace
 ## Handlers
 
 - [Chat completions](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/handler/chat.go): POST /v1/chat/completions — sync and SSE streaming proxy
+- [Feedback](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/handler/feedback.go): POST/GET /v1/feedback and GET /v1/feedback/stats — pass-through with auth header forwarding
 - [Health](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/handler/health.go): GET /healthz and /readyz endpoints
 - [Agent card](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/handler/wellknown.go): GET /.well-known/agent.json
 
