@@ -257,6 +257,49 @@ func TestChatHandler_PropagatesXTraceIdHeader(t *testing.T) {
 	}
 }
 
+func TestChatHandler_ForwardsCanonicalAuthHeaders(t *testing.T) {
+	var captured http.Header
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"chatcmpl-x"}`))
+	}))
+	defer backend.Close()
+
+	h := &handler.ChatHandler{
+		BackendURL: backend.URL,
+		Client:     backend.Client(),
+	}
+
+	// The auth middleware would normally set these. Tests bypass the
+	// middleware so we set them directly to assert forwarding.
+	reqBody := `{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Subject", "alice")
+	req.Header.Set("X-Auth-User", "alice")
+	req.Header.Set("X-Auth-Email", "alice@example.com")
+	req.Header.Set("X-Auth-Mode", "proxy")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if got := captured.Get("X-Auth-Subject"); got != "alice" {
+		t.Errorf("X-Auth-Subject not forwarded: got %q", got)
+	}
+	if got := captured.Get("X-Auth-User"); got != "alice" {
+		t.Errorf("X-Auth-User not forwarded: got %q", got)
+	}
+	if got := captured.Get("X-Auth-Email"); got != "alice@example.com" {
+		t.Errorf("X-Auth-Email not forwarded: got %q", got)
+	}
+	if got := captured.Get("X-Auth-Mode"); got != "proxy" {
+		t.Errorf("X-Auth-Mode not forwarded: got %q", got)
+	}
+}
+
 func TestChatHandler_StreamingBackendError(t *testing.T) {
 	// Backend returns 500 on a streaming request -- gateway should forward the
 	// error status rather than switching to SSE mode.

@@ -44,9 +44,9 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if envelope.Stream {
-		h.proxyStreaming(w, body)
+		h.proxyStreaming(w, r, body)
 	} else {
-		h.proxySync(w, body)
+		h.proxySync(w, r, body)
 	}
 }
 
@@ -67,8 +67,8 @@ func copyPassThroughHeaders(dst http.Header, src http.Header) {
 }
 
 // proxySync forwards the request and returns the full backend response.
-func (h *ChatHandler) proxySync(w http.ResponseWriter, body []byte) {
-	resp, err := h.doBackendRequest(body)
+func (h *ChatHandler) proxySync(w http.ResponseWriter, r *http.Request, body []byte) {
+	resp, err := h.doBackendRequest(r, body)
 	if err != nil {
 		slog.Error("backend request failed", "error", err)
 		http.Error(w, `{"error":"backend request failed"}`, http.StatusBadGateway)
@@ -86,8 +86,8 @@ func (h *ChatHandler) proxySync(w http.ResponseWriter, body []byte) {
 
 // proxyStreaming connects to the backend with streaming enabled and relays
 // SSE chunks to the client.
-func (h *ChatHandler) proxyStreaming(w http.ResponseWriter, body []byte) {
-	resp, err := h.doBackendRequest(body)
+func (h *ChatHandler) proxyStreaming(w http.ResponseWriter, r *http.Request, body []byte) {
+	resp, err := h.doBackendRequest(r, body)
 	if err != nil {
 		slog.Error("backend streaming request failed", "error", err)
 		http.Error(w, `{"error":"backend request failed"}`, http.StatusBadGateway)
@@ -112,14 +112,30 @@ func (h *ChatHandler) proxyStreaming(w http.ResponseWriter, body []byte) {
 	proxy.RelaySSE(resp, w)
 }
 
-// doBackendRequest sends the request body to the backend's chat completions endpoint.
-func (h *ChatHandler) doBackendRequest(body []byte) (*http.Response, error) {
+// forwardedAuthHeaders are the canonical X-Auth-* headers projected by the
+// auth middleware and forwarded to the backend agent.
+var forwardedAuthHeaders = []string{
+	"X-Auth-Subject",
+	"X-Auth-User",
+	"X-Auth-Email",
+	"X-Auth-Mode",
+}
+
+// doBackendRequest sends the request body to the backend's chat completions
+// endpoint, forwarding the canonical X-Auth-* headers from the inbound
+// request so the agent can attribute the call to the resolved identity.
+func (h *ChatHandler) doBackendRequest(r *http.Request, body []byte) (*http.Response, error) {
 	url := h.BackendURL + "/v1/chat/completions"
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for _, name := range forwardedAuthHeaders {
+		if v := r.Header.Get(name); v != "" {
+			req.Header.Set(name, v)
+		}
+	}
 
 	return h.Client.Do(req)
 }
