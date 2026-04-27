@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 )
@@ -41,6 +42,18 @@ func Middleware(a Authenticator) func(http.Handler) http.Handler {
 
 			id, err := a.Authenticate(r)
 			if err != nil {
+				// ErrInvalidToken → 401: caller's bearer token is bad.
+				// Everything else (ErrMissingProxyHeaders, ErrJWKSUnavailable,
+				// arbitrary errors) → 503: deployment is degraded.
+				if errors.Is(err, ErrInvalidToken) {
+					slog.Info("auth: rejecting invalid bearer token",
+						"error", err,
+						"path", r.URL.Path,
+						"method", r.Method,
+					)
+					http.Error(w, `{"error":"invalid bearer token"}`, http.StatusUnauthorized)
+					return
+				}
 				slog.Error("auth: identity resolution failed",
 					"error", err,
 					"path", r.URL.Path,

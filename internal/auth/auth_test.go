@@ -9,7 +9,7 @@ import (
 )
 
 func TestNew_DefaultsToAnonymous(t *testing.T) {
-	a, err := auth.New("", "", "")
+	a, err := auth.New("", auth.Options{})
 	if err != nil {
 		t.Fatalf("New(\"\"): unexpected error: %v", err)
 	}
@@ -19,7 +19,7 @@ func TestNew_DefaultsToAnonymous(t *testing.T) {
 }
 
 func TestNew_AnonymousMode(t *testing.T) {
-	a, err := auth.New(auth.ModeAnonymous, "", "")
+	a, err := auth.New(auth.ModeAnonymous, auth.Options{})
 	if err != nil {
 		t.Fatalf("New(anonymous): unexpected error: %v", err)
 	}
@@ -29,7 +29,10 @@ func TestNew_AnonymousMode(t *testing.T) {
 }
 
 func TestNew_ProxyMode(t *testing.T) {
-	a, err := auth.New(auth.ModeProxy, "X-Forwarded-User", "X-Forwarded-Email")
+	a, err := auth.New(auth.ModeProxy, auth.Options{
+		ProxyUserHeader:  "X-Forwarded-User",
+		ProxyEmailHeader: "X-Forwarded-Email",
+	})
 	if err != nil {
 		t.Fatalf("New(proxy): unexpected error: %v", err)
 	}
@@ -43,14 +46,22 @@ func TestNew_ProxyMode(t *testing.T) {
 }
 
 func TestNew_ProxyRequiresUserHeader(t *testing.T) {
-	if _, err := auth.New(auth.ModeProxy, "", "X-Forwarded-Email"); err == nil {
+	if _, err := auth.New(auth.ModeProxy, auth.Options{ProxyEmailHeader: "X-Forwarded-Email"}); err == nil {
 		t.Fatal("New(proxy, empty user header): expected error, got nil")
 	}
 }
 
 func TestNew_UnknownModeRejected(t *testing.T) {
-	if _, err := auth.New("jwt", "", ""); err == nil {
-		t.Fatal("New(jwt): expected error for unsupported mode, got nil")
+	if _, err := auth.New("garbage", auth.Options{}); err == nil {
+		t.Fatal("New(garbage): expected error for unsupported mode, got nil")
+	}
+}
+
+func TestNew_JWTRequiresJWKSURL(t *testing.T) {
+	if _, err := auth.New(auth.ModeJWT, auth.Options{
+		JWT: auth.JWTConfig{Issuer: "https://kc/realms/x", Audience: "gw"},
+	}); err == nil {
+		t.Fatal("New(jwt, missing JWKSURL): expected error, got nil")
 	}
 }
 

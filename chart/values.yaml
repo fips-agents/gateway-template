@@ -16,7 +16,7 @@ resources:
 config:
   BACKEND_URL: http://my-agent:8080
 
-# Inbound auth strategy. See internal/auth and gateway-template#21.
+# Inbound auth strategy. See internal/auth and gateway-template#21 / #23.
 #   anonymous (default) — no validation, X-Auth-Subject is "anonymous".
 #                         Use for local dev, smoke tests, or any deployment
 #                         that does not need user attribution.
@@ -25,11 +25,32 @@ config:
 #                         X-Forwarded-User / X-Forwarded-Email. The
 #                         gateway pod MUST be unreachable except via that
 #                         proxy, otherwise headers can be spoofed.
+#   jwt                 — in-process JWT validation against a JWKS endpoint.
+#                         Use when there is no OAuth proxy in front of the
+#                         gateway (self-contained deployments). The gateway
+#                         validates Authorization: Bearer <token> against
+#                         auth.jwt.jwksUrl, projects the claims onto the
+#                         canonical X-Auth-* headers.
 auth:
   mode: anonymous
   proxy:
     userHeader: X-Forwarded-User
     emailHeader: X-Forwarded-Email
+  jwt:
+    # JWKS endpoint to fetch signing keys from. Required when mode=jwt.
+    # Example: https://keycloak.example/realms/myrealm/protocol/openid-connect/certs
+    jwksUrl: ""
+    # Expected `iss` claim. Required when mode=jwt.
+    # Example: https://keycloak.example/realms/myrealm
+    issuer: ""
+    # Expected `aud` claim. Required when mode=jwt.
+    audience: ""
+    # Claim name to project onto X-Auth-Subject. Default: sub.
+    subjectClaim: sub
+    # Claim name to project onto X-Auth-User. Default: preferred_username.
+    userClaim: preferred_username
+    # Claim name to project onto X-Auth-Email. Default: email.
+    emailClaim: email
 
 service:
   port: 8080

@@ -2,7 +2,8 @@
 FROM registry.redhat.io/ubi9/go-toolset:1.22 AS builder
 
 WORKDIR /opt/app-root/src
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 RUN go build -o ./gateway ./cmd/server
