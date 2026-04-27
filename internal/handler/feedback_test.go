@@ -13,8 +13,8 @@ import (
 
 func TestFeedbackHandler_PostProxy(t *testing.T) {
 	var capturedBody []byte
-	var capturedAuth string
-	var capturedUser string
+	var capturedSubject, capturedUser, capturedEmail, capturedMode string
+	var capturedAuthorization, capturedXUserID string
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -24,8 +24,12 @@ func TestFeedbackHandler_PostProxy(t *testing.T) {
 			t.Errorf("backend: want path /v1/feedback, got %s", r.URL.Path)
 		}
 		capturedBody, _ = io.ReadAll(r.Body)
-		capturedAuth = r.Header.Get("Authorization")
-		capturedUser = r.Header.Get("X-User-ID")
+		capturedSubject = r.Header.Get("X-Auth-Subject")
+		capturedUser = r.Header.Get("X-Auth-User")
+		capturedEmail = r.Header.Get("X-Auth-Email")
+		capturedMode = r.Header.Get("X-Auth-Mode")
+		capturedAuthorization = r.Header.Get("Authorization")
+		capturedXUserID = r.Header.Get("X-User-ID")
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -38,9 +42,18 @@ func TestFeedbackHandler_PostProxy(t *testing.T) {
 		Client:     backend.Client(),
 	}
 
+	// The auth middleware would normally project these from the resolved
+	// Identity. Tests bypass the middleware so we set them directly to
+	// assert that the gateway forwards canonical headers and drops the
+	// pre-cutover ones.
 	reqBody := `{"trace_id":"tr_1","rating":1,"comment":"great"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/feedback", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Subject", "alice")
+	req.Header.Set("X-Auth-User", "alice")
+	req.Header.Set("X-Auth-Email", "alice@example.com")
+	req.Header.Set("X-Auth-Mode", "proxy")
+	// Pre-cutover headers — must be dropped, not forwarded.
 	req.Header.Set("Authorization", "Bearer secret-token")
 	req.Header.Set("X-User-ID", "user-42")
 	rec := httptest.NewRecorder()
@@ -53,11 +66,23 @@ func TestFeedbackHandler_PostProxy(t *testing.T) {
 	if string(capturedBody) != reqBody {
 		t.Errorf("post proxy: want body %q forwarded, got %q", reqBody, string(capturedBody))
 	}
-	if capturedAuth != "Bearer secret-token" {
-		t.Errorf("post proxy: Authorization header not forwarded, got %q", capturedAuth)
+	if capturedSubject != "alice" {
+		t.Errorf("X-Auth-Subject not forwarded: got %q", capturedSubject)
 	}
-	if capturedUser != "user-42" {
-		t.Errorf("post proxy: X-User-ID header not forwarded, got %q", capturedUser)
+	if capturedUser != "alice" {
+		t.Errorf("X-Auth-User not forwarded: got %q", capturedUser)
+	}
+	if capturedEmail != "alice@example.com" {
+		t.Errorf("X-Auth-Email not forwarded: got %q", capturedEmail)
+	}
+	if capturedMode != "proxy" {
+		t.Errorf("X-Auth-Mode not forwarded: got %q", capturedMode)
+	}
+	if capturedAuthorization != "" {
+		t.Errorf("Authorization header should be dropped, got %q", capturedAuthorization)
+	}
+	if capturedXUserID != "" {
+		t.Errorf("X-User-ID header should be dropped, got %q", capturedXUserID)
 	}
 
 	var got map[string]any

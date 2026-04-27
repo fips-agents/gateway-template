@@ -24,6 +24,27 @@ curl http://localhost:8080/healthz
 | `AGENT_NAME` | No | `gateway-template` | Agent name in `/.well-known/agent.json` |
 | `AGENT_VERSION` | No | `0.1.0` | Agent version in `/.well-known/agent.json` |
 | `LOG_REQUESTS` | No | `false` | Enable structured request logging (skips health probes) |
+| `GATEWAY_AUTH_MODE` | No | `anonymous` | Inbound auth strategy: `anonymous` or `proxy` |
+| `GATEWAY_AUTH_PROXY_USER_HEADER` | No | `X-Forwarded-User` | (`proxy` mode) header carrying the upstream-validated username |
+| `GATEWAY_AUTH_PROXY_EMAIL_HEADER` | No | `X-Forwarded-Email` | (`proxy` mode) header carrying the upstream-validated email; empty disables email projection |
+
+## Authentication
+
+The gateway issues a canonical set of trusted headers to the backend agent on every request:
+
+| Header | Description |
+|---|---|
+| `X-Auth-Subject` | Stable identifier (`anonymous` or the upstream-validated username) |
+| `X-Auth-User` | Human-readable username (may be empty in `anonymous` mode) |
+| `X-Auth-Email` | Email address (may be empty) |
+| `X-Auth-Mode` | `anonymous` or `proxy` |
+
+Inbound copies of these headers are stripped before the strategy runs, so a client cannot spoof identity by setting them directly. The header names match Kagenti's JWT claim shape so the contract survives a future swap to in-process JWKS validation without breaking the agent.
+
+**Modes** (`GATEWAY_AUTH_MODE`):
+
+- `anonymous` *(default)* — no validation. `X-Auth-Subject` is set to `anonymous`. Use for local dev, smoke tests, or any deployment that does not need user attribution.
+- `proxy` — trust an upstream OAuth proxy (e.g. OpenShift `oauth-proxy` sidecar) or service-mesh `outputClaimToHeaders` filter. The gateway reads `X-Forwarded-User` / `X-Forwarded-Email` (header names configurable) and projects them onto the canonical headers. **The gateway pod must be unreachable except via that proxy** — otherwise a client can spoof the upstream headers. If the user header is missing, the gateway returns 503 (fail closed). In-process JWKS validation is deferred to v2.
 
 ## Endpoints
 
@@ -38,7 +59,7 @@ curl http://localhost:8080/healthz
 | `/v1/agent-info` | GET | Pass-through to backend agent info (UI settings) |
 | `/.well-known/agent.json` | GET | Agent discovery card |
 
-The feedback endpoints forward `Authorization`, `X-User-ID`, and `X-Forwarded-User` headers so the backend can attribute feedback to the calling user. Other request headers are dropped.
+All `/v1/*` endpoints forward the canonical `X-Auth-Subject` / `X-Auth-User` / `X-Auth-Email` / `X-Auth-Mode` headers (see Authentication above) so the backend can attribute requests to the resolved identity. Other request headers are dropped.
 
 On the response side the gateway propagates a small allowlist back to the client — currently just `X-Trace-Id`, which the agent backend sets on every chat completion response so the UI can submit feedback against a known trace.
 

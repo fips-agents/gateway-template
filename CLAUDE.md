@@ -45,6 +45,7 @@ Key packages:
 - `internal/config/` -- environment variable parsing
 - `internal/handler/` -- HTTP handlers for each route
 - `internal/middleware/` -- request logging (structured, skips health probes)
+- `internal/auth/` -- inbound auth strategies (`anonymous`, `proxy`) + middleware that strips spoofed `X-Auth-*` headers and projects canonical identity onto the request
 - `internal/proxy/` -- SSE relay logic
 
 ## Configuration
@@ -56,6 +57,13 @@ Key packages:
 | `AGENT_NAME` | No | `gateway-template` | Name in agent card |
 | `AGENT_VERSION` | No | `0.1.0` | Version in agent card |
 | `LOG_REQUESTS` | No | `false` | Enable structured request logging |
+| `GATEWAY_AUTH_MODE` | No | `anonymous` | Inbound auth strategy: `anonymous` or `proxy` |
+| `GATEWAY_AUTH_PROXY_USER_HEADER` | No | `X-Forwarded-User` | (`proxy` mode) upstream-validated username header |
+| `GATEWAY_AUTH_PROXY_EMAIL_HEADER` | No | `X-Forwarded-Email` | (`proxy` mode) upstream-validated email header |
+
+## Auth contract
+
+The gateway emits canonical `X-Auth-Subject` / `X-Auth-User` / `X-Auth-Email` / `X-Auth-Mode` headers to the backend on every `/v1/*` request. Inbound copies are stripped before the strategy runs so clients cannot spoof identity. Header names match Kagenti's JWT claim shape so the contract survives a future swap to in-process JWKS validation. `proxy` mode fails closed with 503 when the upstream user header is missing. `jwt` mode (in-process JWKS) is deferred to v2.
 
 ## Deployment
 

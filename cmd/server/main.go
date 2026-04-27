@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fips-agents/gateway-template/internal/auth"
 	"github.com/fips-agents/gateway-template/internal/config"
 	"github.com/fips-agents/gateway-template/internal/handler"
 	"github.com/fips-agents/gateway-template/internal/middleware"
@@ -22,6 +23,12 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("configuration error", "error", err)
+		os.Exit(1)
+	}
+
+	authenticator, err := auth.New(cfg.AuthMode, cfg.AuthProxyUserHeader, cfg.AuthProxyEmailHeader)
+	if err != nil {
+		slog.Error("auth configuration error", "error", err)
 		os.Exit(1)
 	}
 
@@ -64,14 +71,17 @@ func main() {
 		io.Copy(w, resp.Body)
 	})
 
-	var handler http.Handler = mux
+	// Auth runs first so logs (and any later middleware) see the resolved
+	// canonical X-Auth-* headers and never see spoofed inbound copies.
+	var rootHandler http.Handler = mux
 	if cfg.LogRequests {
-		handler = middleware.LogRequests(handler)
+		rootHandler = middleware.LogRequests(rootHandler)
 	}
+	rootHandler = auth.Middleware(authenticator)(rootHandler)
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           handler,
+		Handler:           rootHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -85,6 +95,7 @@ func main() {
 			"backend", cfg.BackendURL,
 			"agent", cfg.AgentName,
 			"version", cfg.AgentVersion,
+			"auth_mode", cfg.AuthMode,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)

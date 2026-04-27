@@ -8,3 +8,6 @@ data:
   {{- range $key, $val := .Values.config }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
+  GATEWAY_AUTH_MODE: {{ .Values.auth.mode | quote }}
+  GATEWAY_AUTH_PROXY_USER_HEADER: {{ .Values.auth.proxy.userHeader | quote }}
+  GATEWAY_AUTH_PROXY_EMAIL_HEADER: {{ .Values.auth.proxy.emailHeader | quote }}
