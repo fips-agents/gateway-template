@@ -7,15 +7,21 @@ import (
 	"net/http"
 )
 
-// authHeaders are the canonical X-Auth-* headers forwarded to the backend so
-// it can attribute feedback to the calling user. The auth middleware
-// populates these from the resolved Identity; inbound spoofed copies are
-// stripped before any handler runs. Other headers are dropped.
+// authHeaders are the auth-related headers forwarded to the backend so it
+// can attribute feedback to the calling user. The auth middleware populates
+// these from the resolved Identity; inbound spoofed copies are stripped
+// before any handler runs. Other headers are dropped.
+//
+// Authorization is included so jwt-mode token-exchange (RFC 8693) works:
+// the middleware replaces the inbound user JWT with a downstream-audienced
+// swapped token before the handler runs, or strips Authorization when no
+// swap is configured. We never forward the raw inbound user JWT.
 var authHeaders = []string{
 	"X-Auth-Subject",
 	"X-Auth-User",
 	"X-Auth-Email",
 	"X-Auth-Mode",
+	"Authorization",
 }
 
 // FeedbackHandler proxies user feedback API requests to the backend agent

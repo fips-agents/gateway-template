@@ -112,13 +112,20 @@ func (h *ChatHandler) proxyStreaming(w http.ResponseWriter, r *http.Request, bod
 	proxy.RelaySSE(resp, w)
 }
 
-// forwardedAuthHeaders are the canonical X-Auth-* headers projected by the
-// auth middleware and forwarded to the backend agent.
+// forwardedAuthHeaders are the auth-related headers projected by the auth
+// middleware and forwarded to the backend agent.
+//
+// Authorization is included so jwt-mode token-exchange (RFC 8693) works:
+// the middleware replaces the inbound user JWT with a downstream-audienced
+// swapped token (Identity.BearerToken) before the handler runs, or strips
+// Authorization entirely when no swap is configured. We never forward the
+// raw inbound user JWT.
 var forwardedAuthHeaders = []string{
 	"X-Auth-Subject",
 	"X-Auth-User",
 	"X-Auth-Email",
 	"X-Auth-Mode",
+	"Authorization",
 }
 
 // doBackendRequest sends the request body to the backend's chat completions

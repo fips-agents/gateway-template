@@ -48,17 +48,22 @@ type JWTConfig struct {
 // 401 without leaking validation details to the caller. Detailed reasons are
 // logged.
 type JWTAuth struct {
-	cfg     JWTConfig
-	keyfunc jwt.Keyfunc
-	parser  *jwt.Parser
+	cfg       JWTConfig
+	keyfunc   jwt.Keyfunc
+	parser    *jwt.Parser
+	exchanger *TokenExchanger
 }
 
 // NewJWTAuth constructs a JWTAuth. JWKS fetch happens lazily — the first
 // request triggers a fetch, subsequent requests use the cache. This means
 // the gateway can start up while Keycloak is still warming.
 //
+// exchanger is optional. When non-nil, every successful Authenticate call
+// performs an RFC 8693 swap of the inbound subject token before returning,
+// populating Identity.BearerToken with the swapped value.
+//
 // If you need eager JWKS warmup at startup, call (j *JWTAuth).Warm(ctx).
-func NewJWTAuth(cfg JWTConfig) (*JWTAuth, error) {
+func NewJWTAuth(cfg JWTConfig, exchanger *TokenExchanger) (*JWTAuth, error) {
 	if cfg.JWKSURL == "" {
 		return nil, fmt.Errorf("auth: jwt mode requires JWKSURL")
 	}
@@ -92,9 +97,10 @@ func NewJWTAuth(cfg JWTConfig) (*JWTAuth, error) {
 	)
 
 	return &JWTAuth{
-		cfg:     cfg,
-		keyfunc: k.Keyfunc,
-		parser:  parser,
+		cfg:       cfg,
+		keyfunc:   k.Keyfunc,
+		parser:    parser,
+		exchanger: exchanger,
 	}, nil
 }
 
@@ -127,12 +133,27 @@ func (j *JWTAuth) Authenticate(r *http.Request) (Identity, error) {
 		return Identity{}, fmt.Errorf("%w: missing %q claim", ErrInvalidToken, j.cfg.SubjectClaim)
 	}
 
-	return Identity{
+	id := Identity{
 		Subject: subject,
 		User:    stringClaim(claims, j.cfg.UserClaim),
 		Email:   stringClaim(claims, j.cfg.EmailClaim),
 		Mode:    ModeJWT,
-	}, nil
+	}
+
+	if j.exchanger != nil {
+		swapped, err := j.exchanger.Exchange(r.Context(), tokenStr)
+		if err != nil {
+			// Exchange errors flow through ErrExchangeFailed (NOT
+			// ErrInvalidToken). The middleware maps non-ErrInvalidToken
+			// errors to 503 — token exchange that does not succeed means
+			// the gateway cannot vouch for the downstream call, so we fail
+			// closed rather than silently forward an unverifiable identity.
+			return Identity{}, err
+		}
+		id.BearerToken = swapped
+	}
+
+	return id, nil
 }
 
 // bearerToken extracts the token from an `Authorization: Bearer <token>`

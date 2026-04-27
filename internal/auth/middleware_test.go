@@ -214,3 +214,47 @@ type stubAuth struct {
 func (s stubAuth) Authenticate(*http.Request) (auth.Identity, error) {
 	return s.id, s.err
 }
+
+// TestMiddleware_StripsInboundAuthorizationByDefault ensures that, when the
+// strategy resolves an Identity without a BearerToken, the inbound
+// Authorization header does not leak through to the handler. The gateway
+// should never forward a bearer token it has not derived itself.
+func TestMiddleware_StripsInboundAuthorizationByDefault(t *testing.T) {
+	cap := &captureHandler{}
+	h := auth.Middleware(&auth.AnonymousAuth{})(cap)
+
+	req := httptest.NewRequest("POST", "/v1/feedback", nil)
+	req.Header.Set("Authorization", "Bearer raw-user-jwt")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got := cap.got.Get("Authorization"); got != "" {
+		t.Errorf("inbound Authorization leaked through: got %q", got)
+	}
+}
+
+// TestMiddleware_ProjectsBearerTokenFromIdentity verifies that when the
+// strategy populates Identity.BearerToken (e.g. an RFC 8693 swapped token),
+// the middleware writes it as `Authorization: Bearer <token>` so handlers
+// can forward it to the backend.
+func TestMiddleware_ProjectsBearerTokenFromIdentity(t *testing.T) {
+	cap := &captureHandler{}
+	stub := stubAuth{id: auth.Identity{
+		Subject:     "user-123",
+		Mode:        auth.ModeJWT,
+		BearerToken: "swapped-for-backend",
+	}}
+	h := auth.Middleware(stub)(cap)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	// Inbound Authorization (the user's JWT) must be replaced by the swap.
+	req.Header.Set("Authorization", "Bearer raw-user-jwt")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got := cap.got.Get("Authorization"); got != "Bearer swapped-for-backend" {
+		t.Errorf("Authorization: got %q, want %q", got, "Bearer swapped-for-backend")
+	}
+}

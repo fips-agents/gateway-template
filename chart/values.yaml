@@ -51,6 +51,37 @@ auth:
     userClaim: preferred_username
     # Claim name to project onto X-Auth-Email. Default: email.
     emailClaim: email
+    # RFC 8693 token exchange (auth v2 part 2). When enabled, the gateway
+    # swaps the inbound user JWT for a downstream-audienced token before
+    # forwarding to the backend. The downstream MCP server / agent
+    # validates the swapped token against the same JWKS, getting a
+    # signed assertion of who is calling rather than a header it has to
+    # trust.
+    #
+    # Leave disabled if the gateway and backend share a trust boundary
+    # (e.g. same OpenShift namespace with NetworkPolicies) — the canonical
+    # X-Auth-* headers are sufficient there.
+    exchange:
+      enabled: false
+      # RFC 8693 token endpoint. Same Keycloak token endpoint that
+      # issues the inbound user tokens.
+      # Example: https://keycloak.example/realms/myrealm/protocol/openid-connect/token
+      tokenUrl: ""
+      # Confidential client representing the gateway's service account.
+      # Used as the `client_id` form parameter on the exchange request.
+      clientId: ""
+      # Reference to an existing Kubernetes Secret holding the client
+      # secret. Using a secretKeyRef keeps the secret out of values.yaml.
+      clientSecretRef:
+        name: ""
+        key: client-secret
+      # The downstream-resource client whose ID becomes the swapped
+      # token's `aud`. The downstream service must validate against
+      # this audience.
+      audience: ""
+      # Optional space-separated scope set requested on the swap. Empty
+      # means no scope narrowing.
+      scope: ""
 
 service:
   port: 8080

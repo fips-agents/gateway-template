@@ -33,6 +33,11 @@ curl http://localhost:8080/healthz
 | `GATEWAY_AUTH_JWT_SUBJECT_CLAIM` | No | `sub` | (`jwt` mode) claim to project onto `X-Auth-Subject` |
 | `GATEWAY_AUTH_JWT_USER_CLAIM` | No | `preferred_username` | (`jwt` mode) claim to project onto `X-Auth-User` |
 | `GATEWAY_AUTH_JWT_EMAIL_CLAIM` | No | `email` | (`jwt` mode) claim to project onto `X-Auth-Email` |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_URL` | exchange | -- | (`jwt` mode, optional) RFC 8693 token endpoint. Setting this together with the next three enables token exchange. |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_ID` | exchange | -- | (`jwt` mode) confidential client representing the gateway's service account on the exchange request |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET` | exchange | -- | (`jwt` mode) client secret for the exchange request |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_AUDIENCE` | exchange | -- | (`jwt` mode) downstream audience the swapped token is issued for |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_SCOPE` | No | -- | (`jwt` mode) optional space-separated scope set requested on the swap |
 
 ## Authentication
 
@@ -52,6 +57,20 @@ Inbound copies of these headers are stripped before the strategy runs, so a clie
 - `anonymous` *(default)* — no validation. `X-Auth-Subject` is set to `anonymous`. Use for local dev, smoke tests, or any deployment that does not need user attribution.
 - `proxy` — trust an upstream OAuth proxy (e.g. OpenShift `oauth-proxy` sidecar) or service-mesh `outputClaimToHeaders` filter. The gateway reads `X-Forwarded-User` / `X-Forwarded-Email` (header names configurable) and projects them onto the canonical headers. **The gateway pod must be unreachable except via that proxy** — otherwise a client can spoof the upstream headers. If the user header is missing, the gateway returns 503 (fail closed).
 - `jwt` — in-process bearer-token validation against a JWKS endpoint. The gateway reads `Authorization: Bearer <token>`, validates the signature against keys fetched from `GATEWAY_AUTH_JWT_JWKS_URL` (cached by `kid`), enforces `iss`, `aud`, `exp`, `nbf`, and projects the configured claims onto the canonical headers. Returns 401 on invalid/expired/wrong-issuer/wrong-audience tokens, 503 if the JWKS endpoint is unreachable AND the cache is cold. Use this when there is no OAuth proxy in front of the gateway (self-contained deployments, or anywhere clients can present tokens directly). Only RSA / ECDSA / RSA-PSS signatures are accepted; HMAC and `alg=none` are rejected by construction.
+
+### Token exchange (`jwt` mode only)
+
+By default the gateway forwards canonical `X-Auth-*` headers to the backend but does **not** forward `Authorization` — the backend has to trust the gateway's header projection. That is fine when the gateway and backend share a trust boundary (same namespace, NetworkPolicy locked down). It is not fine when the call crosses a trust boundary (multi-agent chains, per-user-MCP scopes), where the downstream needs a *signed* assertion of who is calling.
+
+Set the four `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_*` env vars together to opt in. The gateway will then, after validating the inbound JWT:
+
+1. Call `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_URL` with `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` (RFC 8693) using the configured confidential-client credentials, requesting an audience-narrowed swap of the inbound token.
+2. Cache the swapped token in-process (TTL = `min(token-expiry − 30s, 5min)`) keyed by `sha256(inbound-token)`.
+3. Forward the swap as `Authorization: Bearer <swapped>` to the backend, alongside the unchanged `X-Auth-*` headers.
+
+The downstream service validates the swapped token against the same JWKS, sees the `aud` it expects, and gets a cryptographic assertion of who is calling. Exchange failures fail closed with 503 — the gateway never silently downgrades to forwarding without the swap. The raw inbound user JWT is **never** forwarded downstream; if exchange is disabled, `Authorization` is stripped entirely.
+
+Partial configuration (some of the four required vars set, others not) is rejected at startup. Either configure all four or none.
 
 **Choosing a mode:**
 

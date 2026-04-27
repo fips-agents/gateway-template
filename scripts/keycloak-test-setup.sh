@@ -22,6 +22,7 @@ NS="${KC_NAMESPACE:-keycloak}"
 POD="${KC_POD:-keycloak-0}"
 REALM="${KC_TEST_REALM:-gateway-template-test}"
 CLIENT_ID="${KC_TEST_CLIENT_ID:-gateway-template}"
+TARGET_CLIENT_ID="${KC_TEST_TARGET_CLIENT_ID:-gateway-template-backend}"
 USER_NAME="${KC_TEST_USER:-alice}"
 USER_PASS="${KC_TEST_USER_PASSWORD:-alicepw}"
 USER_EMAIL="${KC_TEST_USER_EMAIL:-alice@example.test}"
@@ -104,6 +105,41 @@ kcq create "clients/${CLIENT_UUID}/protocol-mappers/models" -r "$REALM" \
   -s 'config."access.token.claim"=true' \
   -s 'config."id.token.claim"=false'
 
+# --- RFC 8693 token exchange (auth v2 part 2) ---
+#
+# Enable Keycloak's "Standard Token Exchange" (token exchange v2) on the
+# source client. With this attribute set, the gateway client can call
+# /token with grant_type=token-exchange to swap a user-bearing token for
+# one audienced at a different client.
+#
+# Requires Keycloak 26+ on the server. Older Keycloak deployments need
+# the legacy fine-grained-permissions model (not configured here).
+kcq update "clients/${CLIENT_UUID}" -r "$REALM" \
+  -s 'attributes."standard.token.exchange.enabled"=true'
+
+# Create the target client that the swapped token will be audienced at.
+# This represents the downstream resource (in the gateway's case: the
+# backend agent). It needs no credentials of its own — it only exists so
+# the swap has a valid `audience` to point at.
+TARGET_UUID=$(kc create clients -r "$REALM" \
+  -s "clientId=${TARGET_CLIENT_ID}" \
+  -s "publicClient=true" \
+  -s "directAccessGrantsEnabled=false" \
+  -s "serviceAccountsEnabled=false" \
+  -s "standardFlowEnabled=false" \
+  -i 2>/dev/null | tr -d '\r\n')
+
+# Add an audience mapper on the source client so the swapped token's
+# `aud` claim contains the target client. Without this, the swap returns
+# a token with aud=${CLIENT_ID}, defeating the point.
+kcq create "clients/${CLIENT_UUID}/protocol-mappers/models" -r "$REALM" \
+  -s "name=aud-${TARGET_CLIENT_ID}" \
+  -s "protocol=openid-connect" \
+  -s "protocolMapper=oidc-audience-mapper" \
+  -s 'config."included.client.audience"='"${TARGET_CLIENT_ID}" \
+  -s 'config."access.token.claim"=true' \
+  -s 'config."id.token.claim"=false'
+
 cat <<EOF
 export KC_INTEGRATION=1
 export KC_ISSUER="${ISSUER}"
@@ -115,4 +151,8 @@ export KC_CLIENT_SECRET="test-secret"
 export KC_USERNAME="${USER_NAME}"
 export KC_PASSWORD="${USER_PASS}"
 export KC_USER_EMAIL="${USER_EMAIL}"
+export KC_EXCHANGE_TOKEN_URL="${TOKEN_URL}"
+export KC_EXCHANGE_CLIENT_ID="${CLIENT_ID}"
+export KC_EXCHANGE_CLIENT_SECRET="test-secret"
+export KC_EXCHANGE_AUDIENCE="${TARGET_CLIENT_ID}"
 EOF

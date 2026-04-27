@@ -64,9 +64,23 @@ func Middleware(a Authenticator) func(http.Handler) http.Handler {
 			}
 
 			setCanonicalHeaders(r.Header, id)
+			projectAuthorization(r.Header, id)
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// projectAuthorization replaces the inbound Authorization header with the
+// gateway-derived bearer token (e.g. an RFC 8693 swapped token) when the
+// strategy populated id.BearerToken. Otherwise it strips Authorization so
+// the raw inbound bearer never leaks downstream — the gateway forwards only
+// what it can vouch for.
+func projectAuthorization(h http.Header, id Identity) {
+	if id.BearerToken != "" {
+		h.Set("Authorization", "Bearer "+id.BearerToken)
+		return
+	}
+	h.Del("Authorization")
 }
 
 // stripCanonicalHeaders removes any inbound copies of the canonical X-Auth-*

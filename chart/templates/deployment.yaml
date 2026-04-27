@@ -25,6 +25,14 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "gateway-template.fullname" . }}
+          {{- if and (eq .Values.auth.mode "jwt") .Values.auth.jwt.exchange.enabled }}
+          env:
+            - name: GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "auth.jwt.exchange.clientSecretRef.name is required when auth.jwt.exchange.enabled=true" .Values.auth.jwt.exchange.clientSecretRef.name }}
+                  key: {{ .Values.auth.jwt.exchange.clientSecretRef.key | default "client-secret" }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

@@ -300,6 +300,71 @@ func TestChatHandler_ForwardsCanonicalAuthHeaders(t *testing.T) {
 	}
 }
 
+func TestChatHandler_ForwardsAuthorization(t *testing.T) {
+	// In jwt mode with token exchange, the auth middleware replaces the
+	// inbound user JWT with a downstream-audienced swapped token on the
+	// request before the handler runs. The handler must forward that
+	// Authorization header to the backend.
+	var captured http.Header
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"chatcmpl-x"}`))
+	}))
+	defer backend.Close()
+
+	h := &handler.ChatHandler{
+		BackendURL: backend.URL,
+		Client:     backend.Client(),
+	}
+
+	reqBody := `{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer swapped-for-backend")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if got := captured.Get("Authorization"); got != "Bearer swapped-for-backend" {
+		t.Errorf("Authorization not forwarded: got %q", got)
+	}
+}
+
+func TestChatHandler_OmitsAuthorizationWhenAbsent(t *testing.T) {
+	// When the auth middleware strips Authorization (no swap configured,
+	// anonymous mode, etc.), the handler must not invent one or forward
+	// anything. The backend should receive no Authorization header.
+	var captured http.Header
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"chatcmpl-x"}`))
+	}))
+	defer backend.Close()
+
+	h := &handler.ChatHandler{
+		BackendURL: backend.URL,
+		Client:     backend.Client(),
+	}
+
+	reqBody := `{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	// No Authorization on inbound — simulates middleware having stripped it.
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if got := captured.Get("Authorization"); got != "" {
+		t.Errorf("Authorization should be absent on backend request, got %q", got)
+	}
+}
+
 func TestChatHandler_StreamingBackendError(t *testing.T) {
 	// Backend returns 500 on a streaming request -- gateway should forward the
 	// error status rather than switching to SSE mode.

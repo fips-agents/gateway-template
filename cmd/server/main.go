@@ -26,6 +26,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	var exchanger *auth.TokenExchanger
+	if cfg.JWTExchangeEnabled() {
+		exchanger, err = auth.NewTokenExchanger(auth.TokenExchangeConfig{
+			TokenURL:     cfg.AuthJWTExchangeURL,
+			ClientID:     cfg.AuthJWTExchangeClientID,
+			ClientSecret: cfg.AuthJWTExchangeClientSecret,
+			Audience:     cfg.AuthJWTExchangeAudience,
+			Scope:        cfg.AuthJWTExchangeScope,
+		})
+		if err != nil {
+			slog.Error("token exchange configuration error", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	authenticator, err := auth.New(cfg.AuthMode, auth.Options{
 		ProxyUserHeader:  cfg.AuthProxyUserHeader,
 		ProxyEmailHeader: cfg.AuthProxyEmailHeader,
@@ -37,6 +52,7 @@ func main() {
 			UserClaim:    cfg.AuthJWTUserClaim,
 			EmailClaim:   cfg.AuthJWTEmailClaim,
 		},
+		JWTExchanger: exchanger,
 	})
 	if err != nil {
 		slog.Error("auth configuration error", "error", err)
@@ -107,6 +123,7 @@ func main() {
 			"agent", cfg.AgentName,
 			"version", cfg.AgentVersion,
 			"auth_mode", cfg.AuthMode,
+			"jwt_token_exchange", exchanger != nil,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)

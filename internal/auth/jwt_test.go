@@ -361,6 +361,88 @@ func TestJWTAuth_RejectsNoneAlg(t *testing.T) {
 	}
 }
 
+// newJWTAuthWithExchanger constructs a JWTAuth backed by f's JWKS and the
+// supplied TokenExchanger. Mirrors newJWTAuth but exercises the exchange
+// path so we can assert Identity.BearerToken behaviour.
+func newJWTAuthWithExchanger(t *testing.T, f *jwksFixture, ex *auth.TokenExchanger) auth.Authenticator {
+	t.Helper()
+	a, err := auth.New(auth.ModeJWT, auth.Options{
+		JWT: auth.JWTConfig{
+			JWKSURL:  f.server.URL,
+			Issuer:   testIssuer,
+			Audience: testAudience,
+		},
+		JWTExchanger: ex,
+	})
+	if err != nil {
+		t.Fatalf("New(jwt+exchanger): %v", err)
+	}
+	return a
+}
+
+func TestJWTAuth_WithExchanger_PopulatesBearerToken(t *testing.T) {
+	f := newJWKSFixture(t)
+	xf := newExchangeFixture(t)
+	xf.accessToken = "swapped-for-backend"
+
+	ex := newExchanger(t, xf)
+	a := newJWTAuthWithExchanger(t, f, ex)
+
+	tok := f.signToken(t, defaultClaims(testIssuer, testAudience), "")
+	id, err := a.Authenticate(reqWithBearer(tok))
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if id.BearerToken != "swapped-for-backend" {
+		t.Errorf("Identity.BearerToken: got %q, want %q", id.BearerToken, "swapped-for-backend")
+	}
+	// Other identity fields should still resolve from the inbound JWT.
+	if id.Subject != "user-123" || id.Mode != auth.ModeJWT {
+		t.Errorf("identity: got %+v", id)
+	}
+	if got := xf.calls.Load(); got != 1 {
+		t.Errorf("expected 1 token-exchange call, got %d", got)
+	}
+	// The exchange must receive the inbound subject token verbatim.
+	if got := xf.lastForm.Get("subject_token"); got != tok {
+		t.Errorf("exchange subject_token: got %q, want inbound JWT", got)
+	}
+}
+
+func TestJWTAuth_WithExchanger_FailureSurfacesAsExchangeFailed(t *testing.T) {
+	f := newJWKSFixture(t)
+	xf := newExchangeFixture(t)
+	xf.status = http.StatusBadGateway
+
+	ex := newExchanger(t, xf)
+	a := newJWTAuthWithExchanger(t, f, ex)
+
+	tok := f.signToken(t, defaultClaims(testIssuer, testAudience), "")
+	_, err := a.Authenticate(reqWithBearer(tok))
+	if !errors.Is(err, auth.ErrExchangeFailed) {
+		t.Fatalf("want ErrExchangeFailed, got %v", err)
+	}
+	// Crucially: NOT ErrInvalidToken. The middleware must distinguish
+	// degraded-deployment failures from caller-token failures.
+	if errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("exchange failure must not present as ErrInvalidToken: %v", err)
+	}
+}
+
+func TestJWTAuth_WithoutExchanger_LeavesBearerTokenEmpty(t *testing.T) {
+	f := newJWKSFixture(t)
+	a := newJWTAuth(t, f, testIssuer, testAudience)
+
+	tok := f.signToken(t, defaultClaims(testIssuer, testAudience), "")
+	id, err := a.Authenticate(reqWithBearer(tok))
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if id.BearerToken != "" {
+		t.Errorf("Identity.BearerToken should be empty when no exchanger configured, got %q", id.BearerToken)
+	}
+}
+
 // Sanity check that the fixture itself round-trips, so a real failure in
 // the validation path can be told apart from a fixture bug.
 func TestJWKSFixture_RoundTrip(t *testing.T) {
