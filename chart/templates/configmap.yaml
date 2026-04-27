@@ -18,4 +18,12 @@ data:
   GATEWAY_AUTH_JWT_SUBJECT_CLAIM: {{ .Values.auth.jwt.subjectClaim | default "sub" | quote }}
   GATEWAY_AUTH_JWT_USER_CLAIM: {{ .Values.auth.jwt.userClaim | default "preferred_username" | quote }}
   GATEWAY_AUTH_JWT_EMAIL_CLAIM: {{ .Values.auth.jwt.emailClaim | default "email" | quote }}
+  {{- if .Values.auth.jwt.exchange.enabled }}
+  GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_URL: {{ required "auth.jwt.exchange.tokenUrl is required when auth.jwt.exchange.enabled=true" .Values.auth.jwt.exchange.tokenUrl | quote }}
+  GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_ID: {{ required "auth.jwt.exchange.clientId is required when auth.jwt.exchange.enabled=true" .Values.auth.jwt.exchange.clientId | quote }}
+  GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_AUDIENCE: {{ required "auth.jwt.exchange.audience is required when auth.jwt.exchange.enabled=true" .Values.auth.jwt.exchange.audience | quote }}
+  {{- with .Values.auth.jwt.exchange.scope }}
+  GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_SCOPE: {{ . | quote }}
+  {{- end }}
+  {{- end }}
   {{- end }}
