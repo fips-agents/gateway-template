@@ -25,7 +25,7 @@ make image-build
 
 ## Architecture
 
-This is a thin reverse proxy -- minimal external dependencies. The core proxy and auth middleware use the Go standard library only; the `jwt` auth mode adds two stdlib-crypto-only third-party deps (`github.com/golang-jwt/jwt/v5`, `github.com/MicahParks/keyfunc/v3`) to validate inbound bearer tokens against a JWKS endpoint. Both libraries route through Go's FIPS-certified crypto module when the binary is built with FIPS enabled.
+This is a thin reverse proxy -- minimal external dependencies. The core proxy and auth middleware use the Go standard library only; the `jwt` auth mode adds two stdlib-crypto-only third-party deps (`github.com/golang-jwt/jwt/v5`, `github.com/MicahParks/keyfunc/v3`) to validate inbound bearer tokens against a JWKS endpoint. The optional RFC 8693 token-exchange path on top of `jwt` mode adds no new third-party deps — it speaks plain `application/x-www-form-urlencoded` to the IdP's token endpoint via stdlib `net/http`. Both crypto libraries route through Go's FIPS-certified crypto module when the binary is built with FIPS enabled.
 
 ```
 Client --> Gateway (:8080) --> Backend Agent
@@ -45,7 +45,7 @@ Key packages:
 - `internal/config/` -- environment variable parsing
 - `internal/handler/` -- HTTP handlers for each route
 - `internal/middleware/` -- request logging (structured, skips health probes)
-- `internal/auth/` -- inbound auth strategies (`anonymous`, `proxy`, `jwt`) + middleware that strips spoofed `X-Auth-*` headers and projects canonical identity onto the request. `jwt` mode validates `Authorization: Bearer <token>` against a configured JWKS endpoint (cached by `kid`), enforces `iss`/`aud`/`exp`/`nbf`, and maps invalid tokens → 401 vs. JWKS-cold-cache failures → 503
+- `internal/auth/` -- inbound auth strategies (`anonymous`, `proxy`, `jwt`) + middleware that strips spoofed `X-Auth-*` headers and projects canonical identity onto the request. `jwt` mode validates `Authorization: Bearer <token>` against a configured JWKS endpoint (cached by `kid`), enforces `iss`/`aud`/`exp`/`nbf`, and maps invalid tokens → 401 vs. JWKS-cold-cache failures → 503. Optional RFC 8693 token exchange (`exchange.go`) swaps the inbound user JWT for a downstream-audienced token before the handler runs; `Identity.BearerToken` carries the swapped value, the middleware projects it as `Authorization: Bearer <token>` on the request (or strips Authorization entirely when no swap is configured), and handlers forward it to the backend
 - `internal/proxy/` -- SSE relay logic
 
 ## Configuration
@@ -66,10 +66,17 @@ Key packages:
 | `GATEWAY_AUTH_JWT_SUBJECT_CLAIM` | No | `sub` | (`jwt` mode) claim → `X-Auth-Subject` |
 | `GATEWAY_AUTH_JWT_USER_CLAIM` | No | `preferred_username` | (`jwt` mode) claim → `X-Auth-User` |
 | `GATEWAY_AUTH_JWT_EMAIL_CLAIM` | No | `email` | (`jwt` mode) claim → `X-Auth-Email` |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_URL` | exchange | -- | (`jwt` mode) RFC 8693 token endpoint; setting all four required exchange vars enables the swap |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_ID` | exchange | -- | (`jwt` mode) gateway service-account client ID |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET` | exchange | -- | (`jwt` mode) gateway service-account client secret |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_AUDIENCE` | exchange | -- | (`jwt` mode) downstream audience the swapped token targets |
+| `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_SCOPE` | No | -- | (`jwt` mode) optional space-separated scope set requested on the swap |
 
 ## Auth contract
 
-The gateway emits canonical `X-Auth-Subject` / `X-Auth-User` / `X-Auth-Email` / `X-Auth-Mode` headers to the backend on every `/v1/*` request. Inbound copies are stripped before the strategy runs so clients cannot spoof identity. Header names match Kagenti's AuthBridge JWT claim shape, so an AuthBridge token and a fipsagents-issued token resolve onto the same canonical contract. `proxy` mode fails closed with 503 when the upstream user header is missing. `jwt` mode validates `Authorization: Bearer <token>` against a JWKS endpoint, returning 401 on bad/expired/wrong-issuer/wrong-audience tokens and 503 only when the JWKS endpoint is unreachable AND the cache is cold. Token-exchange (RFC 8693) for downstream MCP/tool calls is deferred to a follow-up.
+The gateway emits canonical `X-Auth-Subject` / `X-Auth-User` / `X-Auth-Email` / `X-Auth-Mode` headers to the backend on every `/v1/*` request. Inbound copies are stripped before the strategy runs so clients cannot spoof identity. Header names match Kagenti's AuthBridge JWT claim shape, so an AuthBridge token and a fipsagents-issued token resolve onto the same canonical contract. `proxy` mode fails closed with 503 when the upstream user header is missing. `jwt` mode validates `Authorization: Bearer <token>` against a JWKS endpoint, returning 401 on bad/expired/wrong-issuer/wrong-audience tokens and 503 only when the JWKS endpoint is unreachable AND the cache is cold.
+
+`Authorization` itself is part of the contract: by default the middleware strips inbound Authorization before the handler runs (so the gateway never forwards a raw user JWT). When the four `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_*` env vars are set together, the gateway performs an RFC 8693 swap of the inbound token (subject_token) for a downstream-audienced token (the `audience` form parameter), caches it for `min(expires_in − 30s, 5min)` keyed by `sha256(inbound-token)`, and forwards it as `Authorization: Bearer <swapped>` to the backend. Exchange failures fail closed with 503. Partial token-exchange config (some required vars set, others not) is rejected at startup so a typo cannot silently disable the swap.
 
 ### Live integration test
 
