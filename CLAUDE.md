@@ -31,6 +31,8 @@ This is a thin reverse proxy -- no business logic, no external dependencies. All
 Client --> Gateway (:8080) --> Backend Agent
              |
              +-- /v1/chat/completions  (POST, sync + SSE streaming)
+             +-- /v1/feedback          (POST/GET, pass-through, forwards auth headers)
+             +-- /v1/feedback/stats    (GET, pass-through)
              +-- /v1/agent-info        (GET, pass-through to backend)
              +-- /healthz              (GET, liveness)
              +-- /readyz               (GET, checks backend)

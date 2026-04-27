@@ -30,10 +30,14 @@ curl http://localhost:8080/healthz
 | Path | Method | Description |
 |---|---|---|
 | `/v1/chat/completions` | POST | OpenAI-compatible chat completions (sync + streaming) |
+| `/v1/feedback` | POST, GET | User feedback submit/list (pass-through to backend) |
+| `/v1/feedback/stats` | GET | Aggregated feedback stats (pass-through to backend) |
 | `/healthz` | GET | Liveness probe |
 | `/readyz` | GET | Readiness probe (checks backend connectivity) |
 | `/v1/agent-info` | GET | Pass-through to backend agent info (UI settings) |
 | `/.well-known/agent.json` | GET | Agent discovery card |
+
+The feedback endpoints forward `Authorization`, `X-User-ID`, and `X-Forwarded-User` headers so the backend can attribute feedback to the calling user. Other headers are dropped.
 
 ## Deployment
 

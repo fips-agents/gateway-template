@@ -32,6 +32,14 @@ func main() {
 		BackendURL: cfg.BackendURL,
 		Client:     client,
 	})
+	mux.Handle("/v1/feedback", &handler.FeedbackHandler{
+		BackendURL: cfg.BackendURL,
+		Client:     client,
+	})
+	mux.Handle("/v1/feedback/stats", &handler.FeedbackStatsHandler{
+		BackendURL: cfg.BackendURL,
+		Client:     client,
+	})
 	mux.Handle("/healthz", &handler.HealthHandler{})
 	mux.Handle("/readyz", &handler.ReadyHandler{
 		BackendURL: cfg.BackendURL,
