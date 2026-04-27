@@ -169,6 +169,60 @@ func TestFeedbackHandler_BackendError(t *testing.T) {
 	}
 }
 
+func TestFeedbackByIdHandler_PatchProxy(t *testing.T) {
+	var capturedPath, capturedMethod, capturedBody string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedMethod = r.Method
+		body, _ := io.ReadAll(r.Body)
+		capturedBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"feedback_id":"fb_x","rating":-1}`))
+	}))
+	defer backend.Close()
+
+	h := &handler.FeedbackByIdHandler{
+		BackendURL: backend.URL,
+		Client:     backend.Client(),
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/v1/feedback/fb_x",
+		strings.NewReader(`{"rating":-1,"comment":"updated"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("feedback_id", "fb_x")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH proxy: want 200, got %d", rec.Code)
+	}
+	if capturedMethod != http.MethodPatch {
+		t.Errorf("backend received %s, want PATCH", capturedMethod)
+	}
+	if capturedPath != "/v1/feedback/fb_x" {
+		t.Errorf("backend path = %q, want /v1/feedback/fb_x", capturedPath)
+	}
+	if capturedBody != `{"rating":-1,"comment":"updated"}` {
+		t.Errorf("backend body = %q, want body forwarded verbatim", capturedBody)
+	}
+}
+
+func TestFeedbackByIdHandler_RejectsNonPatch(t *testing.T) {
+	h := &handler.FeedbackByIdHandler{
+		BackendURL: "http://127.0.0.1:0",
+		Client:     &http.Client{},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/feedback/fb_x", nil)
+	req.SetPathValue("feedback_id", "fb_x")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
 func TestFeedbackStatsHandler_GetProxy(t *testing.T) {
 	var capturedQuery string
 

@@ -38,6 +38,28 @@ func (h *FeedbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// FeedbackByIdHandler proxies PATCH /v1/feedback/{feedback_id} to the
+// backend.  Registered separately from FeedbackHandler because Go's
+// http.ServeMux treats `/v1/feedback` and `/v1/feedback/<id>` as distinct
+// patterns.  Wired in main.go via the Go 1.22 pattern syntax.
+type FeedbackByIdHandler struct {
+	BackendURL string
+	Client     *http.Client
+}
+
+func (h *FeedbackByIdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.PathValue("feedback_id")
+	if id == "" {
+		http.Error(w, `{"error":"feedback_id required"}`, http.StatusBadRequest)
+		return
+	}
+	proxyPassthrough(w, r, h.Client, h.BackendURL+"/v1/feedback/"+id)
+}
+
 // FeedbackStatsHandler proxies GET /v1/feedback/stats to the backend.
 type FeedbackStatsHandler struct {
 	BackendURL string
@@ -57,7 +79,7 @@ func (h *FeedbackStatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 // response (status, Content-Type, body) is copied to w.
 func proxyPassthrough(w http.ResponseWriter, r *http.Request, client *http.Client, backendURL string) {
 	var body io.Reader
-	if r.Method == http.MethodPost {
+	if r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodPut {
 		raw, err := io.ReadAll(r.Body)
 		if err != nil {
 			slog.Error("failed to read request body", "error", err)
@@ -82,7 +104,7 @@ func proxyPassthrough(w http.ResponseWriter, r *http.Request, client *http.Clien
 
 	if ct := r.Header.Get("Content-Type"); ct != "" {
 		req.Header.Set("Content-Type", ct)
-	} else if r.Method == http.MethodPost {
+	} else if r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodPut {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	for _, name := range authHeaders {

@@ -32,11 +32,14 @@ func main() {
 		BackendURL: cfg.BackendURL,
 		Client:     client,
 	})
-	mux.Handle("/v1/feedback", &handler.FeedbackHandler{
+	feedbackHandler := &handler.FeedbackHandler{BackendURL: cfg.BackendURL, Client: client}
+	mux.Handle("POST /v1/feedback", feedbackHandler)
+	mux.Handle("GET /v1/feedback", feedbackHandler)
+	mux.Handle("GET /v1/feedback/stats", &handler.FeedbackStatsHandler{
 		BackendURL: cfg.BackendURL,
 		Client:     client,
 	})
-	mux.Handle("/v1/feedback/stats", &handler.FeedbackStatsHandler{
+	mux.Handle("PATCH /v1/feedback/{feedback_id}", &handler.FeedbackByIdHandler{
 		BackendURL: cfg.BackendURL,
 		Client:     client,
 	})
