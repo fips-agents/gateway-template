@@ -49,6 +49,12 @@ type Identity struct {
 	User    string
 	Email   string
 	Mode    string
+	// BearerToken is the value the middleware will project as
+	// `Authorization: Bearer <token>` to the backend. Empty means the
+	// middleware strips Authorization from the inbound request — the gateway
+	// only forwards a bearer token it has cryptographically derived (e.g.
+	// via RFC 8693 token exchange in jwt mode).
+	BearerToken string
 }
 
 // ErrMissingProxyHeaders signals that proxy mode was configured but the
@@ -72,6 +78,14 @@ type Options struct {
 
 	// JWT is consulted only in jwt mode.
 	JWT JWTConfig
+	// JWTExchanger is consulted only in jwt mode. When non-nil the gateway
+	// performs an RFC 8693 token exchange after validating the inbound
+	// token, projecting the swapped token onto Identity.BearerToken so the
+	// middleware can forward a downstream-audienced bearer instead of the
+	// raw user JWT. Optional — jwt mode without an exchanger validates and
+	// emits canonical X-Auth-* headers but forwards no Authorization
+	// downstream.
+	JWTExchanger *TokenExchanger
 }
 
 // New returns the authenticator for the given mode.
@@ -88,7 +102,7 @@ func New(mode string, opts Options) (Authenticator, error) {
 			EmailHeader: opts.ProxyEmailHeader,
 		}, nil
 	case ModeJWT:
-		return NewJWTAuth(opts.JWT)
+		return NewJWTAuth(opts.JWT, opts.JWTExchanger)
 	default:
 		return nil, fmt.Errorf("auth: unknown mode %q (want %q, %q, or %q)", mode, ModeAnonymous, ModeProxy, ModeJWT)
 	}
