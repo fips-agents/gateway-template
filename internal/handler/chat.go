@@ -50,6 +50,22 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// passThroughHeaders are response headers copied from the backend to the
+// client. The list is deliberately narrow — keep the gateway thin and
+// avoid leaking internal headers.
+var passThroughHeaders = []string{
+	"X-Trace-Id",
+}
+
+// copyPassThroughHeaders copies the allowlisted headers from src to dst.
+func copyPassThroughHeaders(dst http.Header, src http.Header) {
+	for _, name := range passThroughHeaders {
+		if v := src.Get(name); v != "" {
+			dst.Set(name, v)
+		}
+	}
+}
+
 // proxySync forwards the request and returns the full backend response.
 func (h *ChatHandler) proxySync(w http.ResponseWriter, body []byte) {
 	resp, err := h.doBackendRequest(body)
@@ -61,6 +77,7 @@ func (h *ChatHandler) proxySync(w http.ResponseWriter, body []byte) {
 	defer resp.Body.Close()
 
 	w.Header().Set("Content-Type", "application/json")
+	copyPassThroughHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		slog.Warn("error copying backend response", "error", err)
@@ -80,6 +97,7 @@ func (h *ChatHandler) proxyStreaming(w http.ResponseWriter, body []byte) {
 
 	if resp.StatusCode != http.StatusOK {
 		w.Header().Set("Content-Type", "application/json")
+		copyPassThroughHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 		return
@@ -89,6 +107,7 @@ func (h *ChatHandler) proxyStreaming(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	copyPassThroughHeaders(w.Header(), resp.Header)
 
 	proxy.RelaySSE(resp, w)
 }

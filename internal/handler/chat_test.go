@@ -231,6 +231,32 @@ func TestChatHandler_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestChatHandler_PropagatesXTraceIdHeader(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Trace-Id", "trace_abcdef0123456789")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"chatcmpl-x"}`))
+	}))
+	defer backend.Close()
+
+	h := &handler.ChatHandler{
+		BackendURL: backend.URL,
+		Client:     backend.Client(),
+	}
+
+	reqBody := `{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-Trace-Id"); got != "trace_abcdef0123456789" {
+		t.Errorf("X-Trace-Id not propagated; got %q", got)
+	}
+}
+
 func TestChatHandler_StreamingBackendError(t *testing.T) {
 	// Backend returns 500 on a streaming request -- gateway should forward the
 	// error status rather than switching to SSE mode.

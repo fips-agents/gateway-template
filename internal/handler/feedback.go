@@ -104,6 +104,7 @@ func proxyPassthrough(w http.ResponseWriter, r *http.Request, client *http.Clien
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 	}
+	copyPassThroughHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		slog.Warn("error copying backend response", "error", err)
