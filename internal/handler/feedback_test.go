@@ -44,8 +44,11 @@ func TestFeedbackHandler_PostProxy(t *testing.T) {
 
 	// The auth middleware would normally project these from the resolved
 	// Identity. Tests bypass the middleware so we set them directly to
-	// assert that the gateway forwards canonical headers and drops the
-	// pre-cutover ones.
+	// assert what the gateway forwards. Authorization is now part of the
+	// auth contract (jwt-mode token exchange relies on the middleware
+	// placing a swapped token there); the handler trusts whatever the
+	// middleware put on the request. The middleware is responsible for
+	// ensuring it is never the raw inbound user JWT.
 	reqBody := `{"trace_id":"tr_1","rating":1,"comment":"great"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/feedback", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -53,8 +56,8 @@ func TestFeedbackHandler_PostProxy(t *testing.T) {
 	req.Header.Set("X-Auth-User", "alice")
 	req.Header.Set("X-Auth-Email", "alice@example.com")
 	req.Header.Set("X-Auth-Mode", "proxy")
-	// Pre-cutover headers — must be dropped, not forwarded.
-	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Authorization", "Bearer middleware-curated-token")
+	// Non-auth headers must still be dropped.
 	req.Header.Set("X-User-ID", "user-42")
 	rec := httptest.NewRecorder()
 
@@ -78,8 +81,8 @@ func TestFeedbackHandler_PostProxy(t *testing.T) {
 	if capturedMode != "proxy" {
 		t.Errorf("X-Auth-Mode not forwarded: got %q", capturedMode)
 	}
-	if capturedAuthorization != "" {
-		t.Errorf("Authorization header should be dropped, got %q", capturedAuthorization)
+	if capturedAuthorization != "Bearer middleware-curated-token" {
+		t.Errorf("Authorization not forwarded: got %q", capturedAuthorization)
 	}
 	if capturedXUserID != "" {
 		t.Errorf("X-User-ID header should be dropped, got %q", capturedXUserID)
