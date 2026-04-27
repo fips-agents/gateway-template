@@ -163,6 +163,92 @@ func TestJWTAuth_LiveKeycloak_HappyPath(t *testing.T) {
 	}
 }
 
+func TestJWTAuth_LiveKeycloak_TokenExchange(t *testing.T) {
+	if os.Getenv("KC_INTEGRATION") == "" {
+		t.Skip("set KC_INTEGRATION=1 to enable")
+	}
+	if os.Getenv("KC_EXCHANGE_AUDIENCE") == "" {
+		t.Skip("set KC_EXCHANGE_* (run scripts/keycloak-test-setup.sh against Keycloak 26+) to enable")
+	}
+
+	orig := http.DefaultTransport
+	http.DefaultTransport = &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // sandbox-only
+	}
+	defer func() { http.DefaultTransport = orig }()
+
+	ex, err := auth.NewTokenExchanger(auth.TokenExchangeConfig{
+		TokenURL:     mustEnv(t, "KC_EXCHANGE_TOKEN_URL"),
+		ClientID:     mustEnv(t, "KC_EXCHANGE_CLIENT_ID"),
+		ClientSecret: mustEnv(t, "KC_EXCHANGE_CLIENT_SECRET"),
+		Audience:     mustEnv(t, "KC_EXCHANGE_AUDIENCE"),
+		HTTPClient:   liveKeycloakHTTPClient(),
+	})
+	if err != nil {
+		t.Fatalf("NewTokenExchanger: %v", err)
+	}
+
+	a, err := auth.New(auth.ModeJWT, auth.Options{
+		JWT: auth.JWTConfig{
+			JWKSURL:  mustEnv(t, "KC_JWKS_URL"),
+			Issuer:   mustEnv(t, "KC_ISSUER"),
+			Audience: mustEnv(t, "KC_AUDIENCE"),
+		},
+		JWTExchanger: ex,
+	})
+	if err != nil {
+		t.Fatalf("auth.New(jwt+exchange): %v", err)
+	}
+
+	userTok := fetchUserToken(t,
+		mustEnv(t, "KC_TOKEN_URL"),
+		mustEnv(t, "KC_CLIENT_ID"),
+		mustEnv(t, "KC_CLIENT_SECRET"),
+		mustEnv(t, "KC_USERNAME"),
+		mustEnv(t, "KC_PASSWORD"),
+	)
+
+	r := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	r.Header.Set("Authorization", "Bearer "+userTok)
+
+	id, err := a.Authenticate(r)
+	if err != nil {
+		t.Fatalf("Authenticate (with exchange): %v", err)
+	}
+	if id.BearerToken == "" {
+		t.Fatal("expected non-empty BearerToken from exchange, got empty")
+	}
+	if id.BearerToken == userTok {
+		t.Error("BearerToken equals input — Keycloak did not actually swap the token")
+	}
+
+	// Round-trip the swapped token through a fresh validator pointed at
+	// the *exchange* audience. Successful validation proves: Keycloak
+	// signed the swap (cryptographic assertion), aud matches the
+	// downstream resource the gateway requested, and any downstream MCP
+	// server using the same JWKS can verify the swap the same way.
+	downstream, err := auth.New(auth.ModeJWT, auth.Options{
+		JWT: auth.JWTConfig{
+			JWKSURL:  mustEnv(t, "KC_JWKS_URL"),
+			Issuer:   mustEnv(t, "KC_ISSUER"),
+			Audience: mustEnv(t, "KC_EXCHANGE_AUDIENCE"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("downstream validator: %v", err)
+	}
+
+	r2 := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	r2.Header.Set("Authorization", "Bearer "+id.BearerToken)
+	swapID, err := downstream.Authenticate(r2)
+	if err != nil {
+		t.Fatalf("downstream validation of swapped token: %v", err)
+	}
+	if swapID.Subject != id.Subject {
+		t.Errorf("swapped sub %q != original sub %q (user identity must be preserved through the swap)", swapID.Subject, id.Subject)
+	}
+}
+
 func TestJWTAuth_LiveKeycloak_RejectsTamperedToken(t *testing.T) {
 	if os.Getenv("KC_INTEGRATION") == "" {
 		t.Skip("set KC_INTEGRATION=1 to enable")
