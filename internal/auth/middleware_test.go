@@ -116,6 +116,42 @@ func TestMiddleware_ProxyModeFailsClosedOn503(t *testing.T) {
 	}
 }
 
+func TestMiddleware_HealthProbesBypassAuth(t *testing.T) {
+	// In proxy mode the kubelet's liveness/readiness probes hit the
+	// gateway directly with no X-Forwarded-User, which would otherwise
+	// trip ErrMissingProxyHeaders → 503 → crash loop. The middleware
+	// must let probe paths through unauthenticated.
+	cap := &captureHandler{}
+	pa := &auth.ProxyAuth{UserHeader: "X-Forwarded-User"}
+	h := auth.Middleware(pa)(cap)
+
+	for _, path := range []string{"/healthz", "/readyz", "/.well-known/agent.json"} {
+		req := httptest.NewRequest("GET", path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusServiceUnavailable {
+			t.Errorf("path %q: probe path should bypass auth, got 503", path)
+		}
+	}
+}
+
+func TestMiddleware_HealthProbesStillStripSpoofedHeaders(t *testing.T) {
+	// Probe paths bypass the strategy but must still strip inbound
+	// X-Auth-* so they can't be used as a spoof channel.
+	cap := &captureHandler{}
+	h := auth.Middleware(&auth.AnonymousAuth{})(cap)
+
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	req.Header.Set("X-Auth-Subject", "evil")
+	req.Header.Set("X-Auth-User", "evil")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got := cap.got.Get("X-Auth-Subject"); got != "" {
+		t.Errorf("inbound X-Auth-Subject leaked through probe path: got %q", got)
+	}
+}
+
 // TestMiddleware_StubError ensures that any non-nil error from the
 // authenticator (not just ErrMissingProxyHeaders) causes a 503.
 func TestMiddleware_AnyAuthErrorReturns503(t *testing.T) {

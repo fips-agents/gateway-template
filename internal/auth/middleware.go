@@ -5,6 +5,17 @@ import (
 	"net/http"
 )
 
+// unauthenticatedPaths are exempt from auth resolution. Kubelet liveness
+// and readiness probes hit the gateway directly (not through the upstream
+// OAuth proxy) and have no identity, so in proxy mode they would otherwise
+// fail closed and crash-loop the pod. The agent card is metadata and is
+// safe to expose anonymously.
+var unauthenticatedPaths = map[string]struct{}{
+	"/healthz":                 {},
+	"/readyz":                  {},
+	"/.well-known/agent.json":  {},
+}
+
 // Middleware returns an HTTP middleware that resolves caller identity using
 // the supplied Authenticator and projects it onto canonical X-Auth-*
 // headers. Inbound copies of the canonical headers are stripped before the
@@ -13,10 +24,20 @@ import (
 // On ErrMissingProxyHeaders the middleware returns 503 — fail-closed, since
 // a missing upstream identity in proxy mode means the deployment is
 // misconfigured.
+//
+// Probe and discovery paths (see unauthenticatedPaths) bypass the strategy
+// entirely. Inbound canonical headers are still stripped on those paths so
+// they cannot be used as a spoof channel into downstream handlers — but
+// since those handlers don't call any backend, this is defence in depth.
 func Middleware(a Authenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			stripCanonicalHeaders(r.Header)
+
+			if _, exempt := unauthenticatedPaths[r.URL.Path]; exempt {
+				next.ServeHTTP(w, r)
+				return
+			}
 
 			id, err := a.Authenticate(r)
 			if err != nil {
