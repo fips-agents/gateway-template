@@ -25,7 +25,7 @@ make image-build
 
 ## Architecture
 
-This is a thin reverse proxy -- no business logic, no external dependencies. All code uses the Go standard library only.
+This is a thin reverse proxy -- minimal external dependencies. The core proxy and auth middleware use the Go standard library only; the `jwt` auth mode adds two stdlib-crypto-only third-party deps (`github.com/golang-jwt/jwt/v5`, `github.com/MicahParks/keyfunc/v3`) to validate inbound bearer tokens against a JWKS endpoint. Both libraries route through Go's FIPS-certified crypto module when the binary is built with FIPS enabled.
 
 ```
 Client --> Gateway (:8080) --> Backend Agent
@@ -45,7 +45,7 @@ Key packages:
 - `internal/config/` -- environment variable parsing
 - `internal/handler/` -- HTTP handlers for each route
 - `internal/middleware/` -- request logging (structured, skips health probes)
-- `internal/auth/` -- inbound auth strategies (`anonymous`, `proxy`) + middleware that strips spoofed `X-Auth-*` headers and projects canonical identity onto the request
+- `internal/auth/` -- inbound auth strategies (`anonymous`, `proxy`, `jwt`) + middleware that strips spoofed `X-Auth-*` headers and projects canonical identity onto the request. `jwt` mode validates `Authorization: Bearer <token>` against a configured JWKS endpoint (cached by `kid`), enforces `iss`/`aud`/`exp`/`nbf`, and maps invalid tokens → 401 vs. JWKS-cold-cache failures → 503
 - `internal/proxy/` -- SSE relay logic
 
 ## Configuration
@@ -57,13 +57,30 @@ Key packages:
 | `AGENT_NAME` | No | `gateway-template` | Name in agent card |
 | `AGENT_VERSION` | No | `0.1.0` | Version in agent card |
 | `LOG_REQUESTS` | No | `false` | Enable structured request logging |
-| `GATEWAY_AUTH_MODE` | No | `anonymous` | Inbound auth strategy: `anonymous` or `proxy` |
+| `GATEWAY_AUTH_MODE` | No | `anonymous` | Inbound auth strategy: `anonymous`, `proxy`, or `jwt` |
 | `GATEWAY_AUTH_PROXY_USER_HEADER` | No | `X-Forwarded-User` | (`proxy` mode) upstream-validated username header |
 | `GATEWAY_AUTH_PROXY_EMAIL_HEADER` | No | `X-Forwarded-Email` | (`proxy` mode) upstream-validated email header |
+| `GATEWAY_AUTH_JWT_JWKS_URL` | jwt mode | -- | (`jwt` mode) JWKS endpoint URL |
+| `GATEWAY_AUTH_JWT_ISSUER` | jwt mode | -- | (`jwt` mode) expected `iss` claim |
+| `GATEWAY_AUTH_JWT_AUDIENCE` | jwt mode | -- | (`jwt` mode) expected `aud` claim |
+| `GATEWAY_AUTH_JWT_SUBJECT_CLAIM` | No | `sub` | (`jwt` mode) claim → `X-Auth-Subject` |
+| `GATEWAY_AUTH_JWT_USER_CLAIM` | No | `preferred_username` | (`jwt` mode) claim → `X-Auth-User` |
+| `GATEWAY_AUTH_JWT_EMAIL_CLAIM` | No | `email` | (`jwt` mode) claim → `X-Auth-Email` |
 
 ## Auth contract
 
-The gateway emits canonical `X-Auth-Subject` / `X-Auth-User` / `X-Auth-Email` / `X-Auth-Mode` headers to the backend on every `/v1/*` request. Inbound copies are stripped before the strategy runs so clients cannot spoof identity. Header names match Kagenti's JWT claim shape so the contract survives a future swap to in-process JWKS validation. `proxy` mode fails closed with 503 when the upstream user header is missing. `jwt` mode (in-process JWKS) is deferred to v2.
+The gateway emits canonical `X-Auth-Subject` / `X-Auth-User` / `X-Auth-Email` / `X-Auth-Mode` headers to the backend on every `/v1/*` request. Inbound copies are stripped before the strategy runs so clients cannot spoof identity. Header names match Kagenti's AuthBridge JWT claim shape, so an AuthBridge token and a fipsagents-issued token resolve onto the same canonical contract. `proxy` mode fails closed with 503 when the upstream user header is missing. `jwt` mode validates `Authorization: Bearer <token>` against a JWKS endpoint, returning 401 on bad/expired/wrong-issuer/wrong-audience tokens and 503 only when the JWKS endpoint is unreachable AND the cache is cold. Token-exchange (RFC 8693) for downstream MCP/tool calls is deferred to a follow-up.
+
+### Live integration test
+
+`internal/auth/jwt_keycloak_integration_test.go` is build-tagged `integration` and exercises `jwt` mode against a real Keycloak. To run:
+
+```bash
+eval "$(scripts/keycloak-test-setup.sh)"   # bootstraps a clean realm/client/user
+go test -tags integration -run TestJWTAuth_LiveKeycloak ./internal/auth/...
+```
+
+The setup script targets the keycloak operator instance in the `keycloak` namespace of the `mcp-rhoai` cluster (overridable via `KC_CONTEXT` / `KC_NAMESPACE`). Without `KC_INTEGRATION=1` the tests skip, so CI without cluster access stays green.
 
 ## Deployment
 

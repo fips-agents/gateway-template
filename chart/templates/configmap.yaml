@@ -11,3 +11,11 @@ data:
   GATEWAY_AUTH_MODE: {{ .Values.auth.mode | quote }}
   GATEWAY_AUTH_PROXY_USER_HEADER: {{ .Values.auth.proxy.userHeader | quote }}
   GATEWAY_AUTH_PROXY_EMAIL_HEADER: {{ .Values.auth.proxy.emailHeader | quote }}
+  {{- if eq .Values.auth.mode "jwt" }}
+  GATEWAY_AUTH_JWT_JWKS_URL: {{ required "auth.jwt.jwksUrl is required when auth.mode=jwt" .Values.auth.jwt.jwksUrl | quote }}
+  GATEWAY_AUTH_JWT_ISSUER: {{ required "auth.jwt.issuer is required when auth.mode=jwt" .Values.auth.jwt.issuer | quote }}
+  GATEWAY_AUTH_JWT_AUDIENCE: {{ required "auth.jwt.audience is required when auth.mode=jwt" .Values.auth.jwt.audience | quote }}
+  GATEWAY_AUTH_JWT_SUBJECT_CLAIM: {{ .Values.auth.jwt.subjectClaim | default "sub" | quote }}
+  GATEWAY_AUTH_JWT_USER_CLAIM: {{ .Values.auth.jwt.userClaim | default "preferred_username" | quote }}
+  GATEWAY_AUTH_JWT_EMAIL_CLAIM: {{ .Values.auth.jwt.emailClaim | default "email" | quote }}
+  {{- end }}

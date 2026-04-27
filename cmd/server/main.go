@@ -26,7 +26,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	authenticator, err := auth.New(cfg.AuthMode, cfg.AuthProxyUserHeader, cfg.AuthProxyEmailHeader)
+	authenticator, err := auth.New(cfg.AuthMode, auth.Options{
+		ProxyUserHeader:  cfg.AuthProxyUserHeader,
+		ProxyEmailHeader: cfg.AuthProxyEmailHeader,
+		JWT: auth.JWTConfig{
+			JWKSURL:      cfg.AuthJWTJWKSURL,
+			Issuer:       cfg.AuthJWTIssuer,
+			Audience:     cfg.AuthJWTAudience,
+			SubjectClaim: cfg.AuthJWTSubjectClaim,
+			UserClaim:    cfg.AuthJWTUserClaim,
+			EmailClaim:   cfg.AuthJWTEmailClaim,
+		},
+	})
 	if err != nil {
 		slog.Error("auth configuration error", "error", err)
 		os.Exit(1)

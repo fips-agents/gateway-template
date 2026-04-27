@@ -1,6 +1,6 @@
 # gateway-template
 
-An OpenAI-compatible HTTP reverse proxy for AI agent backends. It accepts `/v1/chat/completions` requests (synchronous and SSE streaming), proxies them to a configurable backend agent service, and handles the SSE connection lifecycle including heartbeats and flush. Built with the Go standard library only -- no external dependencies.
+An OpenAI-compatible HTTP reverse proxy for AI agent backends. It accepts `/v1/chat/completions` requests (synchronous and SSE streaming), proxies them to a configurable backend agent service, and handles the SSE connection lifecycle including heartbeats and flush. Built primarily on the Go standard library; the only third-party dependencies are the JWT/JWKS libraries used by `jwt` auth mode (both stdlib-crypto-only, FIPS-compatible).
 
 ## Quick Start
 
@@ -24,9 +24,15 @@ curl http://localhost:8080/healthz
 | `AGENT_NAME` | No | `gateway-template` | Agent name in `/.well-known/agent.json` |
 | `AGENT_VERSION` | No | `0.1.0` | Agent version in `/.well-known/agent.json` |
 | `LOG_REQUESTS` | No | `false` | Enable structured request logging (skips health probes) |
-| `GATEWAY_AUTH_MODE` | No | `anonymous` | Inbound auth strategy: `anonymous` or `proxy` |
+| `GATEWAY_AUTH_MODE` | No | `anonymous` | Inbound auth strategy: `anonymous`, `proxy`, or `jwt` |
 | `GATEWAY_AUTH_PROXY_USER_HEADER` | No | `X-Forwarded-User` | (`proxy` mode) header carrying the upstream-validated username |
 | `GATEWAY_AUTH_PROXY_EMAIL_HEADER` | No | `X-Forwarded-Email` | (`proxy` mode) header carrying the upstream-validated email; empty disables email projection |
+| `GATEWAY_AUTH_JWT_JWKS_URL` | jwt mode | -- | (`jwt` mode) URL of the JWKS endpoint, e.g. `https://kc/realms/x/protocol/openid-connect/certs` |
+| `GATEWAY_AUTH_JWT_ISSUER` | jwt mode | -- | (`jwt` mode) expected `iss` claim |
+| `GATEWAY_AUTH_JWT_AUDIENCE` | jwt mode | -- | (`jwt` mode) expected `aud` claim |
+| `GATEWAY_AUTH_JWT_SUBJECT_CLAIM` | No | `sub` | (`jwt` mode) claim to project onto `X-Auth-Subject` |
+| `GATEWAY_AUTH_JWT_USER_CLAIM` | No | `preferred_username` | (`jwt` mode) claim to project onto `X-Auth-User` |
+| `GATEWAY_AUTH_JWT_EMAIL_CLAIM` | No | `email` | (`jwt` mode) claim to project onto `X-Auth-Email` |
 
 ## Authentication
 
@@ -37,14 +43,23 @@ The gateway issues a canonical set of trusted headers to the backend agent on ev
 | `X-Auth-Subject` | Stable identifier (`anonymous` or the upstream-validated username) |
 | `X-Auth-User` | Human-readable username (may be empty in `anonymous` mode) |
 | `X-Auth-Email` | Email address (may be empty) |
-| `X-Auth-Mode` | `anonymous` or `proxy` |
+| `X-Auth-Mode` | `anonymous`, `proxy`, or `jwt` |
 
-Inbound copies of these headers are stripped before the strategy runs, so a client cannot spoof identity by setting them directly. The header names match Kagenti's JWT claim shape so the contract survives a future swap to in-process JWKS validation without breaking the agent.
+Inbound copies of these headers are stripped before the strategy runs, so a client cannot spoof identity by setting them directly. The header names match Kagenti's JWT claim shape, so an AuthBridge token and a fipsagents-issued token resolve onto the same canonical contract.
 
 **Modes** (`GATEWAY_AUTH_MODE`):
 
 - `anonymous` *(default)* — no validation. `X-Auth-Subject` is set to `anonymous`. Use for local dev, smoke tests, or any deployment that does not need user attribution.
-- `proxy` — trust an upstream OAuth proxy (e.g. OpenShift `oauth-proxy` sidecar) or service-mesh `outputClaimToHeaders` filter. The gateway reads `X-Forwarded-User` / `X-Forwarded-Email` (header names configurable) and projects them onto the canonical headers. **The gateway pod must be unreachable except via that proxy** — otherwise a client can spoof the upstream headers. If the user header is missing, the gateway returns 503 (fail closed). In-process JWKS validation is deferred to v2.
+- `proxy` — trust an upstream OAuth proxy (e.g. OpenShift `oauth-proxy` sidecar) or service-mesh `outputClaimToHeaders` filter. The gateway reads `X-Forwarded-User` / `X-Forwarded-Email` (header names configurable) and projects them onto the canonical headers. **The gateway pod must be unreachable except via that proxy** — otherwise a client can spoof the upstream headers. If the user header is missing, the gateway returns 503 (fail closed).
+- `jwt` — in-process bearer-token validation against a JWKS endpoint. The gateway reads `Authorization: Bearer <token>`, validates the signature against keys fetched from `GATEWAY_AUTH_JWT_JWKS_URL` (cached by `kid`), enforces `iss`, `aud`, `exp`, `nbf`, and projects the configured claims onto the canonical headers. Returns 401 on invalid/expired/wrong-issuer/wrong-audience tokens, 503 if the JWKS endpoint is unreachable AND the cache is cold. Use this when there is no OAuth proxy in front of the gateway (self-contained deployments, or anywhere clients can present tokens directly). Only RSA / ECDSA / RSA-PSS signatures are accepted; HMAC and `alg=none` are rejected by construction.
+
+**Choosing a mode:**
+
+- Behind an OpenShift `oauth-proxy` sidecar or a service-mesh authn filter → `proxy`.
+- Self-contained gateway exposed to clients that already hold a JWT (Keycloak, Auth0, Cognito, Azure AD, etc.) → `jwt`.
+- Local development or smoke tests → `anonymous`.
+
+**FIPS:** the JWT/JWKS implementation uses Go stdlib crypto only (no third-party crypto), so it routes through Go's FIPS module when the binary is built with `GOFIPS140=on` (Go ≥1.24) or `GOEXPERIMENT=boringcrypto` (Go ≤1.23).
 
 ## Endpoints
 

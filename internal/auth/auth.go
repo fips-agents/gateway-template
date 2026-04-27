@@ -23,6 +23,7 @@ import (
 const (
 	ModeAnonymous = "anonymous"
 	ModeProxy     = "proxy"
+	ModeJWT       = "jwt"
 )
 
 // Canonical header names emitted to the backend.
@@ -62,22 +63,34 @@ type Authenticator interface {
 	Authenticate(r *http.Request) (Identity, error)
 }
 
-// New returns the authenticator for the given mode. userHeader and
-// emailHeader are only consulted in proxy mode.
-func New(mode, userHeader, emailHeader string) (Authenticator, error) {
+// Options bundles every parameter New() may consume. Each field is only
+// consulted by the corresponding mode; unused fields are ignored.
+type Options struct {
+	// ProxyUserHeader / ProxyEmailHeader are consulted only in proxy mode.
+	ProxyUserHeader  string
+	ProxyEmailHeader string
+
+	// JWT is consulted only in jwt mode.
+	JWT JWTConfig
+}
+
+// New returns the authenticator for the given mode.
+func New(mode string, opts Options) (Authenticator, error) {
 	switch mode {
 	case ModeAnonymous, "":
 		return &AnonymousAuth{}, nil
 	case ModeProxy:
-		if userHeader == "" {
+		if opts.ProxyUserHeader == "" {
 			return nil, fmt.Errorf("auth: proxy mode requires a non-empty user header name")
 		}
 		return &ProxyAuth{
-			UserHeader:  userHeader,
-			EmailHeader: emailHeader,
+			UserHeader:  opts.ProxyUserHeader,
+			EmailHeader: opts.ProxyEmailHeader,
 		}, nil
+	case ModeJWT:
+		return NewJWTAuth(opts.JWT)
 	default:
-		return nil, fmt.Errorf("auth: unknown mode %q (want %q or %q)", mode, ModeAnonymous, ModeProxy)
+		return nil, fmt.Errorf("auth: unknown mode %q (want %q, %q, or %q)", mode, ModeAnonymous, ModeProxy, ModeJWT)
 	}
 }
 

@@ -152,9 +152,9 @@ func TestMiddleware_HealthProbesStillStripSpoofedHeaders(t *testing.T) {
 	}
 }
 
-// TestMiddleware_StubError ensures that any non-nil error from the
-// authenticator (not just ErrMissingProxyHeaders) causes a 503.
-func TestMiddleware_AnyAuthErrorReturns503(t *testing.T) {
+// TestMiddleware_GenericErrorReturns503 ensures that any non-sentinel
+// error from the authenticator (deployment-level failure) causes a 503.
+func TestMiddleware_GenericErrorReturns503(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
 
@@ -169,6 +169,40 @@ func TestMiddleware_AnyAuthErrorReturns503(t *testing.T) {
 	}
 	if called {
 		t.Error("downstream handler ran despite auth error")
+	}
+}
+
+// TestMiddleware_InvalidTokenReturns401 ensures ErrInvalidToken is
+// distinguished from deployment-level failures and produces 401.
+func TestMiddleware_InvalidTokenReturns401(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+
+	stub := stubAuth{err: auth.ErrInvalidToken}
+	h := auth.Middleware(stub)(next)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
+	}
+	if called {
+		t.Error("downstream handler ran despite auth error")
+	}
+}
+
+// TestMiddleware_WrappedInvalidTokenReturns401 ensures errors.Is unwrapping
+// works so jwt.go can wrap ErrInvalidToken with details.
+func TestMiddleware_WrappedInvalidTokenReturns401(t *testing.T) {
+	stub := stubAuth{err: errors.Join(auth.ErrInvalidToken, errors.New("token expired"))}
+	h := auth.Middleware(stub)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
 	}
 }
 
