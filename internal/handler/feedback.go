@@ -7,12 +7,15 @@ import (
 	"net/http"
 )
 
-// authHeaders are the request headers forwarded to the backend so it can
-// attribute feedback to the calling user. Other headers are dropped.
+// authHeaders are the canonical X-Auth-* headers forwarded to the backend so
+// it can attribute feedback to the calling user. The auth middleware
+// populates these from the resolved Identity; inbound spoofed copies are
+// stripped before any handler runs. Other headers are dropped.
 var authHeaders = []string{
-	"Authorization",
-	"X-User-ID",
-	"X-Forwarded-User",
+	"X-Auth-Subject",
+	"X-Auth-User",
+	"X-Auth-Email",
+	"X-Auth-Mode",
 }
 
 // FeedbackHandler proxies user feedback API requests to the backend agent

@@ -1,0 +1,132 @@
+// Package auth resolves the identity of inbound requests and projects it
+// onto a canonical set of trusted headers that the gateway forwards to the
+// backend agent.
+//
+// Header contract emitted to the backend:
+//
+//	X-Auth-Subject  — stable identifier (JWT sub, OpenShift uid, or "anonymous")
+//	X-Auth-User     — human-readable username, may be empty
+//	X-Auth-Email    — email address, may be empty
+//	X-Auth-Mode     — "anonymous" | "proxy"
+//
+// The header names match Kagenti's JWT claim shape so the contract survives
+// a future swap to AuthBridge / in-process JWKS without breaking the agent.
+package auth
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+)
+
+// Mode names. Keep in sync with config.Config.AuthMode validation.
+const (
+	ModeAnonymous = "anonymous"
+	ModeProxy     = "proxy"
+)
+
+// Canonical header names emitted to the backend.
+const (
+	HeaderSubject = "X-Auth-Subject"
+	HeaderUser    = "X-Auth-User"
+	HeaderEmail   = "X-Auth-Email"
+	HeaderMode    = "X-Auth-Mode"
+)
+
+// CanonicalHeaders lists every header the gateway issues. Inbound copies
+// of these are stripped before the strategy runs to prevent client spoofing.
+var CanonicalHeaders = []string{
+	HeaderSubject,
+	HeaderUser,
+	HeaderEmail,
+	HeaderMode,
+}
+
+// Identity is the resolved caller identity.
+type Identity struct {
+	Subject string
+	User    string
+	Email   string
+	Mode    string
+}
+
+// ErrMissingProxyHeaders signals that proxy mode was configured but the
+// upstream did not project the expected user header. Surfaced as 503 so a
+// misconfigured deployment fails closed instead of silently degrading to
+// anonymous.
+var ErrMissingProxyHeaders = errors.New("auth: proxy mode but upstream identity headers are missing")
+
+// Authenticator resolves an Identity from an inbound request. Implementations
+// must not mutate r.
+type Authenticator interface {
+	Authenticate(r *http.Request) (Identity, error)
+}
+
+// New returns the authenticator for the given mode. userHeader and
+// emailHeader are only consulted in proxy mode.
+func New(mode, userHeader, emailHeader string) (Authenticator, error) {
+	switch mode {
+	case ModeAnonymous, "":
+		return &AnonymousAuth{}, nil
+	case ModeProxy:
+		if userHeader == "" {
+			return nil, fmt.Errorf("auth: proxy mode requires a non-empty user header name")
+		}
+		return &ProxyAuth{
+			UserHeader:  userHeader,
+			EmailHeader: emailHeader,
+		}, nil
+	default:
+		return nil, fmt.Errorf("auth: unknown mode %q (want %q or %q)", mode, ModeAnonymous, ModeProxy)
+	}
+}
+
+// AnonymousAuth always returns the anonymous identity. Used for local dev,
+// the smoke script, and any deployment where identity is not required.
+type AnonymousAuth struct{}
+
+// Authenticate returns the canonical anonymous identity.
+func (a *AnonymousAuth) Authenticate(r *http.Request) (Identity, error) {
+	return Identity{
+		Subject: "anonymous",
+		User:    "",
+		Email:   "",
+		Mode:    ModeAnonymous,
+	}, nil
+}
+
+// ProxyAuth trusts an upstream OAuth proxy (or service-mesh authn filter)
+// to project the authenticated user into request headers. The gateway pod
+// must be unreachable except via that proxy, otherwise a client can spoof
+// the headers.
+type ProxyAuth struct {
+	// UserHeader is the request header carrying the username, e.g.
+	// "X-Forwarded-User" (oauth-proxy default).
+	UserHeader string
+	// EmailHeader is the request header carrying the email address, e.g.
+	// "X-Forwarded-Email". Optional — when empty or unset the resolved
+	// identity has no email.
+	EmailHeader string
+}
+
+// Authenticate reads the configured upstream headers and projects them
+// onto the canonical Identity. Returns ErrMissingProxyHeaders when the
+// user header is absent so the caller can fail closed.
+func (p *ProxyAuth) Authenticate(r *http.Request) (Identity, error) {
+	user := r.Header.Get(p.UserHeader)
+	if user == "" {
+		return Identity{}, ErrMissingProxyHeaders
+	}
+
+	email := ""
+	if p.EmailHeader != "" {
+		email = r.Header.Get(p.EmailHeader)
+	}
+
+	return Identity{
+		Subject: user,
+		User:    user,
+		Email:   email,
+		Mode:    ModeProxy,
+	}, nil
+}

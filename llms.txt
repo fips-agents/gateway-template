@@ -8,12 +8,13 @@ This is a template repository. The sentinel string `gateway-template` is replace
 
 - [README](https://raw.githubusercontent.com/fips-agents/gateway-template/main/README.md): Project overview, configuration variables, endpoints, and deployment instructions
 - [Server entrypoint](https://raw.githubusercontent.com/fips-agents/gateway-template/main/cmd/server/main.go): HTTP mux wiring, graceful shutdown, route registration
-- [Config](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/config/config.go): Environment variable parsing (BACKEND_URL, PORT, AGENT_NAME, AGENT_VERSION, LOG_REQUESTS)
+- [Config](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/config/config.go): Environment variable parsing (BACKEND_URL, PORT, AGENT_NAME, AGENT_VERSION, LOG_REQUESTS, GATEWAY_AUTH_MODE, GATEWAY_AUTH_PROXY_USER_HEADER, GATEWAY_AUTH_PROXY_EMAIL_HEADER)
 
 ## Handlers
 
 - [Chat completions](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/handler/chat.go): POST /v1/chat/completions — sync and SSE streaming proxy
-- [Feedback](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/handler/feedback.go): POST/GET /v1/feedback and GET /v1/feedback/stats — pass-through with auth header forwarding
+- [Feedback](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/handler/feedback.go): POST/GET /v1/feedback, PATCH /v1/feedback/{id}, GET /v1/feedback/stats — pass-through; forwards canonical X-Auth-* headers
+- [Auth](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/auth/auth.go): Inbound auth strategies (anonymous, proxy) and middleware that projects identity onto canonical X-Auth-Subject / X-Auth-User / X-Auth-Email / X-Auth-Mode headers
 - [Health](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/handler/health.go): GET /healthz and /readyz endpoints
 - [Agent card](https://raw.githubusercontent.com/fips-agents/gateway-template/main/internal/handler/wellknown.go): GET /.well-known/agent.json
 
