@@ -31,13 +31,16 @@ curl http://localhost:8080/healthz
 |---|---|---|
 | `/v1/chat/completions` | POST | OpenAI-compatible chat completions (sync + streaming) |
 | `/v1/feedback` | POST, GET | User feedback submit/list (pass-through to backend) |
+| `/v1/feedback/{feedback_id}` | PATCH | In-place edit of an existing feedback record |
 | `/v1/feedback/stats` | GET | Aggregated feedback stats (pass-through to backend) |
 | `/healthz` | GET | Liveness probe |
 | `/readyz` | GET | Readiness probe (checks backend connectivity) |
 | `/v1/agent-info` | GET | Pass-through to backend agent info (UI settings) |
 | `/.well-known/agent.json` | GET | Agent discovery card |
 
-The feedback endpoints forward `Authorization`, `X-User-ID`, and `X-Forwarded-User` headers so the backend can attribute feedback to the calling user. Other headers are dropped.
+The feedback endpoints forward `Authorization`, `X-User-ID`, and `X-Forwarded-User` headers so the backend can attribute feedback to the calling user. Other request headers are dropped.
+
+On the response side the gateway propagates a small allowlist back to the client — currently just `X-Trace-Id`, which the agent backend sets on every chat completion response so the UI can submit feedback against a known trace.
 
 ## Deployment
 
