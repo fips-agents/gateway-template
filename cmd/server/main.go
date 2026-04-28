@@ -66,17 +66,45 @@ func main() {
 		BackendURL: cfg.BackendURL,
 		Client:     client,
 	})
-	feedbackHandler := &handler.FeedbackHandler{BackendURL: cfg.BackendURL, Client: client}
+	feedbackTarget := cfg.FeedbackTargetURL()
+	feedbackHandler := &handler.FeedbackHandler{BackendURL: feedbackTarget, Client: client}
 	mux.Handle("POST /v1/feedback", feedbackHandler)
 	mux.Handle("GET /v1/feedback", feedbackHandler)
 	mux.Handle("GET /v1/feedback/stats", &handler.FeedbackStatsHandler{
-		BackendURL: cfg.BackendURL,
+		BackendURL: feedbackTarget,
 		Client:     client,
 	})
 	mux.Handle("PATCH /v1/feedback/{feedback_id}", &handler.FeedbackByIdHandler{
-		BackendURL: cfg.BackendURL,
+		BackendURL: feedbackTarget,
 		Client:     client,
 	})
+
+	// /v1/sessions/* and /v1/traces/* are platform-routable. When
+	// PLATFORM_URL is unset they proxy to the backend agent (preserving
+	// existing behavior for deployments that haven't adopted a sibling
+	// fipsagents-platform).  GET /v1/sessions/{id}/usage is carved out
+	// to always go to the agent because /usage layers PricingConfig
+	// over cost_data — it's an agent capability, not a platform one.
+	sessionsForward, err := handler.NewForwardingHandler(cfg.SessionsTargetURL())
+	if err != nil {
+		slog.Error("sessions forward configuration error", "error", err)
+		os.Exit(1)
+	}
+	tracesForward, err := handler.NewForwardingHandler(cfg.TracesTargetURL())
+	if err != nil {
+		slog.Error("traces forward configuration error", "error", err)
+		os.Exit(1)
+	}
+	usageForward, err := handler.NewForwardingHandler(cfg.BackendURL)
+	if err != nil {
+		slog.Error("usage forward configuration error", "error", err)
+		os.Exit(1)
+	}
+	// Go 1.22 mux: the more specific pattern wins, so this carve-out
+	// runs even though /v1/sessions/ catches everything else.
+	mux.Handle("GET /v1/sessions/{session_id}/usage", usageForward)
+	mux.Handle("/v1/sessions/", sessionsForward)
+	mux.Handle("/v1/traces/", tracesForward)
 	mux.Handle("/healthz", &handler.HealthHandler{})
 	mux.Handle("/readyz", &handler.ReadyHandler{
 		BackendURL: cfg.BackendURL,
@@ -120,6 +148,10 @@ func main() {
 		slog.Info("gateway starting",
 			"port", cfg.Port,
 			"backend", cfg.BackendURL,
+			"platform", cfg.PlatformURL,
+			"platform_route_feedback", cfg.PlatformURL != "" && cfg.PlatformRouteFeedback,
+			"platform_route_sessions", cfg.PlatformURL != "" && cfg.PlatformRouteSessions,
+			"platform_route_traces", cfg.PlatformURL != "" && cfg.PlatformRouteTraces,
 			"agent", cfg.AgentName,
 			"version", cfg.AgentVersion,
 			"auth_mode", cfg.AuthMode,
