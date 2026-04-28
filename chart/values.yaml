@@ -83,6 +83,26 @@ auth:
       # means no scope narrowing.
       scope: ""
 
+# -- Platform service routing (gateway-template#30) --------------------------
+# When `platform.url` is set, /v1/feedback*, /v1/sessions/*, and /v1/traces/*
+# proxy to the deployed fipsagents-platform service instead of fanning out
+# to per-agent backends. Each prefix has an opt-out toggle so a deployment
+# can mix backends — eg keep sessions on the agent (so the agent's
+# /v1/sessions/{id}/usage endpoint stays in-process) while routing
+# feedback and traces to the platform.
+#
+# When `platform.url` is empty (default), behavior is unchanged from 0.4.x:
+# every prefix proxies to the agent referenced by config.BACKEND_URL.
+#
+# GET /v1/sessions/{id}/usage always proxies to the agent regardless of
+# the sessions toggle — that endpoint computes USD cost from the agent's
+# PricingConfig and is not implemented on the platform.
+platform:
+  url: ""        # eg http://fipsagents-platform.fipsagents-platform.svc.cluster.local:8080
+  feedback: true
+  sessions: true
+  traces: true
+
 service:
   port: 8080
 

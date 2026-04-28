@@ -29,16 +29,22 @@ This is a thin reverse proxy -- minimal external dependencies. The core proxy an
 
 ```
 Client --> Gateway (:8080) --> Backend Agent
+                       \---> Platform (optional, when GATEWAY_PLATFORM_URL set)
              |
              +-- /v1/chat/completions  (POST, sync + SSE streaming, propagates X-Trace-Id)
-             +-- /v1/feedback          (POST/GET, pass-through, forwards auth headers)
-             +-- /v1/feedback/{id}     (PATCH, in-place edit of an existing record)
-             +-- /v1/feedback/stats    (GET, pass-through)
+             +-- /v1/feedback          (POST/GET, pass-through, forwards auth headers; routable to platform)
+             +-- /v1/feedback/{id}     (PATCH, in-place edit; routable to platform)
+             +-- /v1/feedback/stats    (GET, pass-through; routable to platform)
+             +-- /v1/sessions/*        (any method, opaque proxy; routable to platform)
+             +-- /v1/sessions/{id}/usage (GET, agent-only — pricing computed in-process)
+             +-- /v1/traces/*          (any method, opaque proxy; routable to platform)
              +-- /v1/agent-info        (GET, pass-through to backend)
              +-- /healthz              (GET, liveness)
              +-- /readyz               (GET, checks backend)
              +-- /.well-known/agent.json (GET, agent card)
 ```
+
+**Platform routing mode (gateway-template#30, chart 0.5.0).** When `GATEWAY_PLATFORM_URL` is set, the three persistence prefixes (`/v1/feedback*`, `/v1/sessions/*`, `/v1/traces/*`) proxy to a deployed [`fipsagents-platform`](https://github.com/fips-agents/fipsagents-platform) service instead of fanning out to per-agent backends. Per-prefix toggles (`GATEWAY_PLATFORM_ROUTE_{FEEDBACK,SESSIONS,TRACES}`) default to `true` when `PLATFORM_URL` is set; flip individual ones to `false` to keep that prefix on the agent. `GET /v1/sessions/{id}/usage` is always agent-routed because it computes USD cost from the agent's `PricingConfig` and is not a platform endpoint. The forwarding handler (`internal/handler/forward.go`, `httputil.ReverseProxy`-based) preserves method, body, query string, `Authorization`, `X-Auth-*`, `X-Tenant`, and `traceparent` headers verbatim — it does not parse request bodies.
 
 Key packages:
 - `cmd/server/` -- entry point, wiring, graceful shutdown
@@ -71,6 +77,10 @@ Key packages:
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET` | exchange | -- | (`jwt` mode) gateway service-account client secret |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_AUDIENCE` | exchange | -- | (`jwt` mode) downstream audience the swapped token targets |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_SCOPE` | No | -- | (`jwt` mode) optional space-separated scope set requested on the swap |
+| `GATEWAY_PLATFORM_URL` | No | -- | Base URL of a deployed `fipsagents-platform` service. When set, persistence prefixes proxy here; trailing slash trimmed. |
+| `GATEWAY_PLATFORM_ROUTE_FEEDBACK` | No | `true` (when `PLATFORM_URL` set) | Route `/v1/feedback*` to platform. Set `false` to keep on agent. No-op when `PLATFORM_URL` unset. |
+| `GATEWAY_PLATFORM_ROUTE_SESSIONS` | No | `true` (when `PLATFORM_URL` set) | Route `/v1/sessions/*` to platform (except `/usage`, always agent). Set `false` to keep on agent. |
+| `GATEWAY_PLATFORM_ROUTE_TRACES` | No | `true` (when `PLATFORM_URL` set) | Route `/v1/traces/*` to platform. Set `false` to keep on agent. |
 
 ## Auth contract
 

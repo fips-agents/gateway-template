@@ -93,6 +93,96 @@ func TestLoad_JWTExchange_PartialConfigRejected(t *testing.T) {
 	}
 }
 
+func TestLoad_PlatformURL_UnsetMeansLegacyFanout(t *testing.T) {
+	cfg, err := loadWithEnv(t, map[string]string{"BACKEND_URL": "http://agent:8080"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PlatformURL != "" {
+		t.Errorf("PlatformURL = %q, want empty", cfg.PlatformURL)
+	}
+	if got := cfg.FeedbackTargetURL(); got != "http://agent:8080" {
+		t.Errorf("FeedbackTargetURL = %q, want backend URL", got)
+	}
+	if got := cfg.SessionsTargetURL(); got != "http://agent:8080" {
+		t.Errorf("SessionsTargetURL = %q, want backend URL", got)
+	}
+	if got := cfg.TracesTargetURL(); got != "http://agent:8080" {
+		t.Errorf("TracesTargetURL = %q, want backend URL", got)
+	}
+}
+
+func TestLoad_PlatformURL_SetRoutesAllPrefixes(t *testing.T) {
+	cfg, err := loadWithEnv(t, map[string]string{
+		"BACKEND_URL":          "http://agent:8080",
+		"GATEWAY_PLATFORM_URL": "http://platform:8080",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PlatformURL != "http://platform:8080" {
+		t.Errorf("PlatformURL = %q, want platform URL", cfg.PlatformURL)
+	}
+	for name, got := range map[string]string{
+		"feedback": cfg.FeedbackTargetURL(),
+		"sessions": cfg.SessionsTargetURL(),
+		"traces":   cfg.TracesTargetURL(),
+	} {
+		if got != "http://platform:8080" {
+			t.Errorf("%sTargetURL = %q, want platform URL", name, got)
+		}
+	}
+}
+
+func TestLoad_PlatformURL_PerPrefixOptOut(t *testing.T) {
+	cfg, err := loadWithEnv(t, map[string]string{
+		"BACKEND_URL":                     "http://agent:8080",
+		"GATEWAY_PLATFORM_URL":            "http://platform:8080",
+		"GATEWAY_PLATFORM_ROUTE_SESSIONS": "false",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.SessionsTargetURL(); got != "http://agent:8080" {
+		t.Errorf("SessionsTargetURL = %q, want backend (opted out)", got)
+	}
+	if got := cfg.FeedbackTargetURL(); got != "http://platform:8080" {
+		t.Errorf("FeedbackTargetURL = %q, want platform (still opted in)", got)
+	}
+	if got := cfg.TracesTargetURL(); got != "http://platform:8080" {
+		t.Errorf("TracesTargetURL = %q, want platform (still opted in)", got)
+	}
+}
+
+func TestLoad_PlatformURL_TrailingSlashTrimmed(t *testing.T) {
+	cfg, err := loadWithEnv(t, map[string]string{
+		"BACKEND_URL":          "http://agent:8080",
+		"GATEWAY_PLATFORM_URL": "http://platform:8080/",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PlatformURL != "http://platform:8080" {
+		t.Errorf("PlatformURL = %q, want trailing slash trimmed", cfg.PlatformURL)
+	}
+}
+
+func TestLoad_PlatformToggle_NoOpWhenURLUnset(t *testing.T) {
+	cfg, err := loadWithEnv(t, map[string]string{
+		"BACKEND_URL":                     "http://agent:8080",
+		"GATEWAY_PLATFORM_ROUTE_SESSIONS": "true",
+		"GATEWAY_PLATFORM_ROUTE_TRACES":   "true",
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Toggles set without PLATFORM_URL must still resolve to backend —
+	// they're cheap config knobs, not failure modes.
+	if got := cfg.SessionsTargetURL(); got != "http://agent:8080" {
+		t.Errorf("SessionsTargetURL = %q, want backend (URL unset)", got)
+	}
+}
+
 func TestLoad_JWTExchange_NotConsultedInAnonymousMode(t *testing.T) {
 	// Setting exchange env vars while in anonymous mode should not trigger
 	// the partial-config validator. They're inert outside jwt mode, so

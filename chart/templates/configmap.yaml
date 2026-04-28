@@ -11,6 +11,14 @@ data:
   GATEWAY_AUTH_MODE: {{ .Values.auth.mode | quote }}
   GATEWAY_AUTH_PROXY_USER_HEADER: {{ .Values.auth.proxy.userHeader | quote }}
   GATEWAY_AUTH_PROXY_EMAIL_HEADER: {{ .Values.auth.proxy.emailHeader | quote }}
+  {{- with .Values.platform }}
+  {{- if .url }}
+  GATEWAY_PLATFORM_URL: {{ .url | quote }}
+  GATEWAY_PLATFORM_ROUTE_FEEDBACK: {{ .feedback | default false | quote }}
+  GATEWAY_PLATFORM_ROUTE_SESSIONS: {{ .sessions | default false | quote }}
+  GATEWAY_PLATFORM_ROUTE_TRACES: {{ .traces | default false | quote }}
+  {{- end }}
+  {{- end }}
   {{- if eq .Values.auth.mode "jwt" }}
   GATEWAY_AUTH_JWT_JWKS_URL: {{ required "auth.jwt.jwksUrl is required when auth.mode=jwt" .Values.auth.jwt.jwksUrl | quote }}
   GATEWAY_AUTH_JWT_ISSUER: {{ required "auth.jwt.issuer is required when auth.mode=jwt" .Values.auth.jwt.issuer | quote }}

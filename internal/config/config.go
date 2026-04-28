@@ -44,6 +44,53 @@ type Config struct {
 	AuthJWTExchangeClientSecret string
 	AuthJWTExchangeAudience     string
 	AuthJWTExchangeScope        string
+
+	// PlatformURL is the base URL of a deployed fipsagents-platform
+	// service. When set, /v1/feedback*, /v1/sessions/*, and /v1/traces/*
+	// route to it instead of fanning out to the per-agent BackendURL.
+	// When empty, gateway behavior is unchanged from 0.4.x — every prefix
+	// proxies to the backend agent.
+	//
+	// Per-prefix toggles allow mixing: eg feedback to platform but
+	// sessions still on the agent. Toggles default to true when
+	// PlatformURL is set; setting them false routes that prefix to the
+	// agent. When PlatformURL is empty, toggles are no-ops.
+	//
+	// GET /v1/sessions/{id}/usage always routes to the agent — that
+	// endpoint computes USD cost from the agent's PricingConfig and is
+	// not implemented on the platform.
+	PlatformURL           string
+	PlatformRouteFeedback bool
+	PlatformRouteSessions bool
+	PlatformRouteTraces   bool
+}
+
+// FeedbackTargetURL returns the base URL that /v1/feedback* requests
+// should be proxied to. When platform routing is enabled for feedback,
+// returns PlatformURL; otherwise falls back to BackendURL.
+func (c *Config) FeedbackTargetURL() string {
+	if c.PlatformURL != "" && c.PlatformRouteFeedback {
+		return c.PlatformURL
+	}
+	return c.BackendURL
+}
+
+// SessionsTargetURL returns the base URL that /v1/sessions/* requests
+// (other than the agent-only /usage carve-out) should be proxied to.
+func (c *Config) SessionsTargetURL() string {
+	if c.PlatformURL != "" && c.PlatformRouteSessions {
+		return c.PlatformURL
+	}
+	return c.BackendURL
+}
+
+// TracesTargetURL returns the base URL that /v1/traces/* requests should
+// be proxied to.
+func (c *Config) TracesTargetURL() string {
+	if c.PlatformURL != "" && c.PlatformRouteTraces {
+		return c.PlatformURL
+	}
+	return c.BackendURL
 }
 
 // JWTExchangeEnabled reports whether all four required token-exchange
@@ -78,6 +125,14 @@ func Load() (*Config, error) {
 		AuthJWTExchangeClientSecret: os.Getenv("GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET"),
 		AuthJWTExchangeAudience:     os.Getenv("GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_AUDIENCE"),
 		AuthJWTExchangeScope:        os.Getenv("GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_SCOPE"),
+
+		PlatformURL: strings.TrimRight(os.Getenv("GATEWAY_PLATFORM_URL"), "/"),
+		// Per-prefix toggles default to true so that setting PLATFORM_URL
+		// alone routes all three prefixes. Operators opt out per-prefix
+		// by setting the toggle to "false".
+		PlatformRouteFeedback: envBoolDefault("GATEWAY_PLATFORM_ROUTE_FEEDBACK", true),
+		PlatformRouteSessions: envBoolDefault("GATEWAY_PLATFORM_ROUTE_SESSIONS", true),
+		PlatformRouteTraces:   envBoolDefault("GATEWAY_PLATFORM_ROUTE_TRACES", true),
 	}
 
 	if cfg.BackendURL == "" {
@@ -136,5 +191,18 @@ func envOrDefault(key, fallback string) string {
 
 func envBool(key string) bool {
 	v := strings.ToLower(os.Getenv(key))
+	return v == "true" || v == "1" || v == "yes"
+}
+
+// envBoolDefault parses a bool env var with an explicit default returned
+// when the variable is unset. Distinct from envBool, which conflates
+// unset with "false". Used for opt-out toggles where unset must mean the
+// default rather than false.
+func envBoolDefault(key string, fallback bool) bool {
+	raw, ok := os.LookupEnv(key)
+	if !ok || raw == "" {
+		return fallback
+	}
+	v := strings.ToLower(raw)
 	return v == "true" || v == "1" || v == "yes"
 }
