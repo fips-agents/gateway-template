@@ -38,6 +38,20 @@ curl http://localhost:8080/healthz
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET` | exchange | -- | (`jwt` mode) client secret for the exchange request |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_AUDIENCE` | exchange | -- | (`jwt` mode) downstream audience the swapped token is issued for |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_SCOPE` | No | -- | (`jwt` mode) optional space-separated scope set requested on the swap |
+| `GATEWAY_FILES_MAX_BYTES` | No | `26214400` (25 MiB) | Max accepted size for `POST /v1/files`. Plain bytes or `k`/`m`/`g` suffix (binary). |
+| `GATEWAY_FILES_ALLOWED_MIME` | No | -- | Comma-separated MIME allowlist for `POST /v1/files`. Exact (`application/pdf`) or wildcard (`image/*`). Empty defers to the agent. |
+| `GATEWAY_FILES_UPLOAD_TIMEOUT` | No | `5m` | Per-request timeout for backend `POST /v1/files`. |
+
+## File uploads
+
+`POST /v1/files` is proxied to the agent as a streaming multipart upload. Two checks run before any byte reaches the agent:
+
+- **Size cap** — `GATEWAY_FILES_MAX_BYTES`. Inbound `Content-Length` over the cap returns 413 immediately. Chunked or unsigned-length bodies are interrupted by `http.MaxBytesReader`.
+- **MIME allowlist** — `GATEWAY_FILES_ALLOWED_MIME` (comma-separated, supports `image/*` wildcards). The first multipart file part's declared `Content-Type` is validated *before* the upstream request fires; rejections return 415 without contacting the backend.
+
+The body is never buffered: form fields (e.g. `session_id`) are read into memory because they're tiny by spec, but the file part body is `io.Copy`'d into a re-encoded multipart that streams through a pipe to the backend. Defense in depth on top of the agent's own libmagic-based content sniffing — not a replacement.
+
+`GET /v1/files`, `GET /v1/files/{file_id}`, and `DELETE /v1/files/{file_id}` are opaque pass-throughs to the agent.
 
 ## Authentication
 

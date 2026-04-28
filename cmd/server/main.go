@@ -105,6 +105,26 @@ func main() {
 	mux.Handle("GET /v1/sessions/{session_id}/usage", usageForward)
 	mux.Handle("/v1/sessions/", sessionsForward)
 	mux.Handle("/v1/traces/", tracesForward)
+
+	// /v1/files: streaming multipart proxy on POST, opaque pass-through
+	// on GET/DELETE. The upload path enforces a size cap and MIME
+	// allowlist before forwarding; metadata operations don't need
+	// special handling. Files are always agent-routed (no platform
+	// equivalent today; see agent-template#100).
+	filesForward, err := handler.NewForwardingHandler(cfg.BackendURL)
+	if err != nil {
+		slog.Error("files forward configuration error", "error", err)
+		os.Exit(1)
+	}
+	mux.Handle("POST /v1/files", &handler.FilesUploadHandler{
+		BackendURL: cfg.BackendURL,
+		MaxBytes:   cfg.FilesMaxBytes,
+		Cfg:        cfg,
+		Timeout:    cfg.FilesUploadTimeout,
+		Client:     &http.Client{},
+	})
+	mux.Handle("GET /v1/files", filesForward)
+	mux.Handle("/v1/files/", filesForward)
 	mux.Handle("/healthz", &handler.HealthHandler{})
 	mux.Handle("/readyz", &handler.ReadyHandler{
 		BackendURL: cfg.BackendURL,
@@ -156,6 +176,9 @@ func main() {
 			"version", cfg.AgentVersion,
 			"auth_mode", cfg.AuthMode,
 			"jwt_token_exchange", exchanger != nil,
+			"files_max_bytes", cfg.FilesMaxBytes,
+			"files_upload_timeout", cfg.FilesUploadTimeout,
+			"files_allowed_mime_count", len(cfg.FilesAllowedMIME),
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)

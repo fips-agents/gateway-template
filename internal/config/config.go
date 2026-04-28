@@ -3,8 +3,21 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
+
+// FilesMaxBytesDefault is the default cap on multipart upload size (25
+// MiB). Sized to comfortably fit reference docs (PDFs, code archives)
+// while staying well clear of typical reverse-proxy buffer limits. Raise
+// via GATEWAY_FILES_MAX_BYTES for deployments that ingest large media.
+const FilesMaxBytesDefault int64 = 25 * 1024 * 1024
+
+// FilesUploadTimeoutDefault is the default per-request deadline applied
+// to backend POST /v1/files calls. Larger than the gateway's default 120s
+// to accommodate slow links uploading near the size cap.
+const FilesUploadTimeoutDefault = 5 * time.Minute
 
 // Config holds the gateway configuration loaded from environment variables.
 type Config struct {
@@ -63,6 +76,56 @@ type Config struct {
 	PlatformRouteFeedback bool
 	PlatformRouteSessions bool
 	PlatformRouteTraces   bool
+
+	// FilesMaxBytes caps the size of a single multipart upload at the
+	// gateway. Requests advertising a Content-Length over this limit are
+	// rejected with 413 before any bytes are read. Streamed bodies are
+	// counted with http.MaxBytesReader so chunked clients cannot bypass
+	// the check by omitting Content-Length. Default: 25 MiB.
+	FilesMaxBytes int64
+
+	// FilesAllowedMIME is the gateway-level MIME allowlist applied to
+	// each file part of a multipart upload. Entries may be exact
+	// (eg "application/pdf") or wildcard (eg "image/*"); empty means
+	// allow-all (the agent's own allowlist still applies). Parsed from
+	// the comma-separated GATEWAY_FILES_ALLOWED_MIME variable.
+	FilesAllowedMIME []string
+
+	// FilesUploadTimeout is the per-request timeout applied to backend
+	// POST /v1/files calls. Default: 5 minutes (vs the 120s used for
+	// chat completions) so large uploads on slow links don't trip the
+	// gateway-side deadline before the agent finishes parsing.
+	FilesUploadTimeout time.Duration
+}
+
+// MIMEAllowed reports whether contentType matches the FilesAllowedMIME
+// allowlist. An empty allowlist means allow-all. Each list entry may be
+// an exact type ("application/pdf") or a wildcard ("image/*"); the
+// match is case-insensitive on the type/subtype but ignores any
+// boundary parameter the caller might have appended.
+func (c *Config) MIMEAllowed(contentType string) bool {
+	if len(c.FilesAllowedMIME) == 0 {
+		return true
+	}
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	if ct == "" {
+		return false
+	}
+	for _, allowed := range c.FilesAllowedMIME {
+		if allowed == ct {
+			return true
+		}
+		if strings.HasSuffix(allowed, "/*") {
+			prefix := allowed[:len(allowed)-1] // keep trailing slash
+			if strings.HasPrefix(ct, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // FeedbackTargetURL returns the base URL that /v1/feedback* requests
@@ -135,6 +198,18 @@ func Load() (*Config, error) {
 		PlatformRouteTraces:   envBoolDefault("GATEWAY_PLATFORM_ROUTE_TRACES", true),
 	}
 
+	maxBytes, err := envBytesDefault("GATEWAY_FILES_MAX_BYTES", FilesMaxBytesDefault)
+	if err != nil {
+		return nil, err
+	}
+	cfg.FilesMaxBytes = maxBytes
+	cfg.FilesAllowedMIME = parseMIMEList(os.Getenv("GATEWAY_FILES_ALLOWED_MIME"))
+	timeout, err := envDurationDefault("GATEWAY_FILES_UPLOAD_TIMEOUT", FilesUploadTimeoutDefault)
+	if err != nil {
+		return nil, err
+	}
+	cfg.FilesUploadTimeout = timeout
+
 	if cfg.BackendURL == "" {
 		return nil, fmt.Errorf("BACKEND_URL environment variable is required")
 	}
@@ -205,4 +280,73 @@ func envBoolDefault(key string, fallback bool) bool {
 	}
 	v := strings.ToLower(raw)
 	return v == "true" || v == "1" || v == "yes"
+}
+
+// envBytesDefault parses a byte-count env var. Accepts plain integers
+// (bytes) or values suffixed with k/m/g (binary, case-insensitive: 5MiB
+// counts as the same thing as 5m). Returns the fallback when the
+// variable is unset or empty.
+func envBytesDefault(key string, fallback int64) (int64, error) {
+	raw, ok := os.LookupEnv(key)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	s := strings.TrimSpace(strings.ToLower(raw))
+	mult := int64(1)
+	for _, suf := range []struct {
+		s string
+		m int64
+	}{
+		{"gib", 1 << 30}, {"gb", 1 << 30}, {"g", 1 << 30},
+		{"mib", 1 << 20}, {"mb", 1 << 20}, {"m", 1 << 20},
+		{"kib", 1 << 10}, {"kb", 1 << 10}, {"k", 1 << 10},
+	} {
+		if strings.HasSuffix(s, suf.s) {
+			mult = suf.m
+			s = strings.TrimSuffix(s, suf.s)
+			break
+		}
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid byte count %q: %w", key, raw, err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s: must be positive, got %q", key, raw)
+	}
+	return n * mult, nil
+}
+
+// envDurationDefault parses a Go duration string from an env var.
+func envDurationDefault(key string, fallback time.Duration) (time.Duration, error) {
+	raw, ok := os.LookupEnv(key)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid duration %q: %w", key, raw, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s: must be positive, got %q", key, raw)
+	}
+	return d, nil
+}
+
+// parseMIMEList splits a comma-separated MIME-type list, trimming
+// whitespace and dropping empty entries. Lowercased so the runtime
+// matcher can compare without re-normalising.
+func parseMIMEList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		v := strings.ToLower(strings.TrimSpace(p))
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
