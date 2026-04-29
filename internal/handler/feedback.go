@@ -121,6 +121,7 @@ func proxyPassthrough(w http.ResponseWriter, r *http.Request, client *http.Clien
 			req.Header.Set(name, v)
 		}
 	}
+	copyPropagationHeaders(req.Header, r.Header)
 
 	resp, err := client.Do(req)
 	if err != nil {

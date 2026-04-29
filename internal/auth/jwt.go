@@ -170,7 +170,7 @@ func (j *JWTAuth) Authenticate(r *http.Request) (Identity, error) {
 	}
 
 	if j.exchanger != nil {
-		swapped, err := j.exchanger.Exchange(r.Context(), tokenStr)
+		swapped, err := j.exchanger.Exchange(r.Context(), tokenStr, r.Header)
 		if err != nil {
 			// Exchange errors flow through ErrExchangeFailed (NOT
 			// ErrInvalidToken). The middleware maps non-ErrInvalidToken

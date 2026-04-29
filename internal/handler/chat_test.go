@@ -365,6 +365,43 @@ func TestChatHandler_OmitsAuthorizationWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestChatHandler_ForwardsTraceparent(t *testing.T) {
+	// W3C Trace Context (traceparent / tracestate) flows end-to-end so the
+	// gateway is a transparent hop for distributed traces. Without this
+	// the chain breaks at the gateway and any OTEL backend shows two
+	// disconnected traces per request.
+	var captured http.Header
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"chatcmpl-x"}`))
+	}))
+	defer backend.Close()
+
+	h := &handler.ChatHandler{
+		BackendURL: backend.URL,
+		Client:     backend.Client(),
+	}
+
+	reqBody := `{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	req.Header.Set("Tracestate", "vendor=opaque-state")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if got := captured.Get("Traceparent"); got != "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" {
+		t.Errorf("Traceparent not forwarded: got %q", got)
+	}
+	if got := captured.Get("Tracestate"); got != "vendor=opaque-state" {
+		t.Errorf("Tracestate not forwarded: got %q", got)
+	}
+}
+
 func TestChatHandler_StreamingBackendError(t *testing.T) {
 	// Backend returns 500 on a streaming request -- gateway should forward the
 	// error status rather than switching to SSE mode.

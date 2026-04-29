@@ -21,6 +21,15 @@ const (
 	tokenTypeAccessToken   = "urn:ietf:params:oauth:token-type:access_token"
 )
 
+// exchangePropagationHeaders are W3C Trace Context headers forwarded from
+// the inbound user request onto the outbound POST to the authorization
+// server's token endpoint. Lets trace tooling correlate exchange-call
+// latency with the user request that triggered it.
+var exchangePropagationHeaders = []string{
+	"Traceparent",
+	"Tracestate",
+}
+
 // ErrExchangeFailed signals that a token exchange call to the authorization
 // server did not yield a usable swapped token. The middleware maps it to 503:
 // a configured exchange that does not succeed means the gateway cannot vouch
@@ -109,7 +118,14 @@ func NewTokenExchanger(cfg TokenExchangeConfig) (*TokenExchanger, error) {
 // the cached entry is still well within its TTL. Errors wrap
 // ErrExchangeFailed so callers can distinguish degraded-deployment failures
 // from caller-token failures (ErrInvalidToken).
-func (e *TokenExchanger) Exchange(ctx context.Context, subjectToken string) (string, error) {
+//
+// inboundHeaders carries W3C Trace Context (traceparent / tracestate) from
+// the inbound request; on a cache miss the values are propagated onto the
+// outbound POST to the authorization server so exchange-call latency lands
+// under the same trace as the user request. Pass nil when no inbound
+// headers are available (eg unit tests, programmatic use). Cache hits do
+// not perform an outbound call, so headers are inspected only on miss.
+func (e *TokenExchanger) Exchange(ctx context.Context, subjectToken string, inboundHeaders http.Header) (string, error) {
 	key := cacheKey(subjectToken)
 	if hit, ok := e.cache.Load(key); ok {
 		ct := hit.(cachedToken)
@@ -118,7 +134,7 @@ func (e *TokenExchanger) Exchange(ctx context.Context, subjectToken string) (str
 		}
 		e.cache.Delete(key)
 	}
-	swapped, ttl, err := e.fetch(ctx, subjectToken)
+	swapped, ttl, err := e.fetch(ctx, subjectToken, inboundHeaders)
 	if err != nil {
 		return "", err
 	}
@@ -141,7 +157,7 @@ func cacheKey(token string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-func (e *TokenExchanger) fetch(ctx context.Context, subjectToken string) (string, time.Duration, error) {
+func (e *TokenExchanger) fetch(ctx context.Context, subjectToken string, inboundHeaders http.Header) (string, time.Duration, error) {
 	form := url.Values{}
 	form.Set("grant_type", grantTypeTokenExchange)
 	form.Set("subject_token", subjectToken)
@@ -160,6 +176,11 @@ func (e *TokenExchanger) fetch(ctx context.Context, subjectToken string) (string
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	for _, name := range exchangePropagationHeaders {
+		if v := inboundHeaders.Get(name); v != "" {
+			req.Header.Set(name, v)
+		}
+	}
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {

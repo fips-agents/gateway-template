@@ -110,6 +110,8 @@ Partial configuration (some of the four required vars set, others not) is reject
 
 All `/v1/*` endpoints forward the canonical `X-Auth-Subject` / `X-Auth-User` / `X-Auth-Email` / `X-Auth-Mode` headers (see Authentication above) so the backend can attribute requests to the resolved identity. Other request headers are dropped.
 
+W3C Trace Context (`Traceparent` / `Tracestate`) is forwarded end-to-end on every backend hop and on the outbound RFC 8693 token-exchange call, so the gateway is a transparent hop in distributed traces. The agent layer's `fipsagents.server.propagation` joins the trace on inbound, and any OTEL backend (Tempo, Honeycomb, Grafana Cloud, etc.) sees a single connected trace per request.
+
 On the response side the gateway propagates a small allowlist back to the client — currently just `X-Trace-Id`, which the agent backend sets on every chat completion response so the UI can submit feedback against a known trace.
 
 ## Deployment
