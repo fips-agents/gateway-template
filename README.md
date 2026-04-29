@@ -33,6 +33,7 @@ curl http://localhost:8080/healthz
 | `GATEWAY_AUTH_JWT_SUBJECT_CLAIM` | No | `sub` | (`jwt` mode) claim to project onto `X-Auth-Subject` |
 | `GATEWAY_AUTH_JWT_USER_CLAIM` | No | `preferred_username` | (`jwt` mode) claim to project onto `X-Auth-User` |
 | `GATEWAY_AUTH_JWT_EMAIL_CLAIM` | No | `email` | (`jwt` mode) claim to project onto `X-Auth-Email` |
+| `GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT` | No | -- | (`jwt` mode) Go duration capping how often the JWKS client refreshes the key set when a token presents an unknown `kid`. Unset inherits keyfunc's library default (one refresh per 5 minutes). |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_URL` | exchange | -- | (`jwt` mode, optional) RFC 8693 token endpoint. Setting this together with the next three enables token exchange. |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_ID` | exchange | -- | (`jwt` mode) confidential client representing the gateway's service account on the exchange request |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET` | exchange | -- | (`jwt` mode) client secret for the exchange request |

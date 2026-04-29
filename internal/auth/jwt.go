@@ -10,6 +10,7 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/time/rate"
 )
 
 // ErrInvalidToken signals that the inbound bearer token failed validation
@@ -25,7 +26,8 @@ var ErrJWKSUnavailable = errors.New("auth: JWKS endpoint unavailable and cache i
 
 // JWTConfig is the parsed configuration for jwt mode. All fields are
 // required except SubjectClaim/UserClaim/EmailClaim, which default to
-// "sub" / "preferred_username" / "email".
+// "sub" / "preferred_username" / "email", and JWKSRefreshRateLimit,
+// which is optional and inherits the keyfunc default when zero.
 type JWTConfig struct {
 	JWKSURL      string
 	Issuer       string
@@ -33,6 +35,19 @@ type JWTConfig struct {
 	SubjectClaim string
 	UserClaim    string
 	EmailClaim   string
+
+	// JWKSRefreshRateLimit caps how often the JWKS client will refresh
+	// the remote key set in response to a token bearing a `kid` it has
+	// not seen. When > 0 the underlying keyfunc client uses
+	// rate.NewLimiter(rate.Every(d), 1); when 0 the keyfunc default of
+	// 1 refresh per 5 minutes applies (i.e. zero means "use library
+	// default", which is conservative enough for most deployments).
+	//
+	// Tune this when a noisy-neighbour burst with forged or unknown
+	// `kid` values could otherwise hammer the JWKS endpoint. Lower
+	// values increase JWKS load; higher values delay legitimate
+	// post-rotation traffic by up to the configured interval.
+	JWKSRefreshRateLimit time.Duration
 }
 
 // JWTAuth validates an inbound bearer token against a JWKS endpoint and
@@ -83,7 +98,21 @@ func NewJWTAuth(cfg JWTConfig, exchanger *TokenExchanger) (*JWTAuth, error) {
 		cfg.EmailClaim = "email"
 	}
 
-	k, err := keyfunc.NewDefaultCtx(context.Background(), []string{cfg.JWKSURL})
+	override := keyfunc.Override{}
+	if cfg.JWKSRefreshRateLimit > 0 {
+		// One refresh per cfg.JWKSRefreshRateLimit, burst 1. Mirrors
+		// the shape of keyfunc's own default (rate.Every(5*time.Minute)),
+		// which makes it easy to reason about: a single forged-kid
+		// burst can fire at most one JWKS refresh per window.
+		override.RefreshUnknownKID = rate.NewLimiter(
+			rate.Every(cfg.JWKSRefreshRateLimit), 1,
+		)
+	}
+	k, err := keyfunc.NewDefaultOverrideCtx(
+		context.Background(),
+		[]string{cfg.JWKSURL},
+		override,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("auth: failed to initialise JWKS client: %w", err)
 	}

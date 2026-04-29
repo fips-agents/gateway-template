@@ -75,6 +75,7 @@ Key packages:
 | `GATEWAY_AUTH_JWT_SUBJECT_CLAIM` | No | `sub` | (`jwt` mode) claim → `X-Auth-Subject` |
 | `GATEWAY_AUTH_JWT_USER_CLAIM` | No | `preferred_username` | (`jwt` mode) claim → `X-Auth-User` |
 | `GATEWAY_AUTH_JWT_EMAIL_CLAIM` | No | `email` | (`jwt` mode) claim → `X-Auth-Email` |
+| `GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT` | No | -- | (`jwt` mode) Go duration capping how often the JWKS client refreshes in response to an unknown `kid`. Unset keeps keyfunc's default of 1 refresh per 5 minutes. Lower for faster post-rotation recovery; higher to harden against forged-kid bursts. |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_URL` | exchange | -- | (`jwt` mode) RFC 8693 token endpoint; setting all four required exchange vars enables the swap |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_ID` | exchange | -- | (`jwt` mode) gateway service-account client ID |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET` | exchange | -- | (`jwt` mode) gateway service-account client secret |

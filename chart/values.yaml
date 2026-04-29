@@ -51,6 +51,13 @@ auth:
     userClaim: preferred_username
     # Claim name to project onto X-Auth-Email. Default: email.
     emailClaim: email
+    # Cap how often the JWKS client refreshes the key set in response to
+    # an unknown `kid`. Empty / unset keeps keyfunc's library default of
+    # 1 refresh per 5 minutes — already conservative enough for most
+    # deployments. Set to a Go duration (eg "30s", "2m") only when you've
+    # measured a real post-rotation latency problem (lower) or want to
+    # harden against forged-kid bursts (higher). See gateway-template#28.
+    jwksRefreshRateLimit: ""
     # RFC 8693 token exchange (auth v2 part 2). When enabled, the gateway
     # swaps the inbound user JWT for a downstream-audienced token before
     # forwarding to the backend. The downstream MCP server / agent

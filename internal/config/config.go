@@ -47,6 +47,16 @@ type Config struct {
 	AuthJWTUserClaim    string
 	AuthJWTEmailClaim   string
 
+	// AuthJWTJWKSRefreshRateLimit caps how often the JWKS client will
+	// refresh the key set in response to an unknown `kid`. Zero (the
+	// default) keeps keyfunc's library default of one refresh per 5
+	// minutes — already conservative enough that a forged-kid burst
+	// can't hammer Keycloak. Tune lower than 5m only if you've measured
+	// a real post-rotation latency problem; tune higher to harden
+	// against noisier neighbours. Parsed as a Go duration from
+	// GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT.
+	AuthJWTJWKSRefreshRateLimit time.Duration
+
 	// Token exchange (RFC 8693): consulted only when AuthMode == "jwt".
 	// When all four required fields (URL, ClientID, ClientSecret, Audience)
 	// are non-empty, the gateway swaps the inbound user JWT for a
@@ -188,6 +198,7 @@ func Load() (*Config, error) {
 		AuthJWTExchangeClientSecret: os.Getenv("GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET"),
 		AuthJWTExchangeAudience:     os.Getenv("GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_AUDIENCE"),
 		AuthJWTExchangeScope:        os.Getenv("GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_SCOPE"),
+		AuthJWTJWKSRefreshRateLimit: 0, // resolved below; 0 ⇒ keyfunc default
 
 		PlatformURL: strings.TrimRight(os.Getenv("GATEWAY_PLATFORM_URL"), "/"),
 		// Per-prefix toggles default to true so that setting PLATFORM_URL
@@ -226,9 +237,32 @@ func Load() (*Config, error) {
 		if err := validateExchangeConfig(cfg); err != nil {
 			return nil, err
 		}
+		d, err := envDurationDefaultAllowZero("GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT", 0)
+		if err != nil {
+			return nil, err
+		}
+		cfg.AuthJWTJWKSRefreshRateLimit = d
 	}
 
 	return cfg, nil
+}
+
+// envDurationDefaultAllowZero parses a Go duration env var. Empty / unset
+// returns fallback. Negative values are rejected, zero is allowed (used by
+// JWKS refresh rate limit, where zero means "use keyfunc default").
+func envDurationDefaultAllowZero(key string, fallback time.Duration) (time.Duration, error) {
+	raw, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid duration %q: %w", key, raw, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s: must be >= 0, got %q", key, raw)
+	}
+	return d, nil
 }
 
 // validateExchangeConfig fails closed on partially-configured token
