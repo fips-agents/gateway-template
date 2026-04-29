@@ -45,12 +45,13 @@ func main() {
 		ProxyUserHeader:  cfg.AuthProxyUserHeader,
 		ProxyEmailHeader: cfg.AuthProxyEmailHeader,
 		JWT: auth.JWTConfig{
-			JWKSURL:      cfg.AuthJWTJWKSURL,
-			Issuer:       cfg.AuthJWTIssuer,
-			Audience:     cfg.AuthJWTAudience,
-			SubjectClaim: cfg.AuthJWTSubjectClaim,
-			UserClaim:    cfg.AuthJWTUserClaim,
-			EmailClaim:   cfg.AuthJWTEmailClaim,
+			JWKSURL:              cfg.AuthJWTJWKSURL,
+			Issuer:               cfg.AuthJWTIssuer,
+			Audience:             cfg.AuthJWTAudience,
+			SubjectClaim:         cfg.AuthJWTSubjectClaim,
+			UserClaim:            cfg.AuthJWTUserClaim,
+			EmailClaim:           cfg.AuthJWTEmailClaim,
+			JWKSRefreshRateLimit: cfg.AuthJWTJWKSRefreshRateLimit,
 		},
 		JWTExchanger: exchanger,
 	})
@@ -179,6 +180,7 @@ func main() {
 			"files_max_bytes", cfg.FilesMaxBytes,
 			"files_upload_timeout", cfg.FilesUploadTimeout,
 			"files_allowed_mime_count", len(cfg.FilesAllowedMIME),
+			"jwt_jwks_refresh_rate_limit", cfg.AuthJWTJWKSRefreshRateLimit,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)

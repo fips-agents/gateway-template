@@ -465,3 +465,73 @@ func TestJWKSFixture_RoundTrip(t *testing.T) {
 	// Silence unused-import warnings for fmt when test fails are commented out.
 	_ = fmt.Sprintf
 }
+
+func TestJWTAuth_AcceptsJWKSRefreshRateLimit(t *testing.T) {
+	// Smoke test: NewJWTAuth must accept a JWKSRefreshRateLimit field
+	// without erroring. The keyfunc/jwkset internals enforce the
+	// limiter; we only assert that our wiring builds the auth object
+	// successfully and validates a normal token.
+	f := newJWKSFixture(t)
+	a, err := auth.New(auth.ModeJWT, auth.Options{
+		JWT: auth.JWTConfig{
+			JWKSURL:              f.server.URL,
+			Issuer:               testIssuer,
+			Audience:             testAudience,
+			JWKSRefreshRateLimit: 50 * time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New(jwt) with refresh-rate-limit: %v", err)
+	}
+	tok := f.signToken(t, defaultClaims(testIssuer, testAudience), "")
+	if _, err := a.Authenticate(reqWithBearer(tok)); err != nil {
+		t.Fatalf("Authenticate (rate-limit configured): %v", err)
+	}
+}
+
+func TestJWTAuth_UnknownKidRefreshIsRateLimited(t *testing.T) {
+	// keyfunc/jwkset implements the limiter via rate.Limiter.Wait,
+	// which blocks the unknown-kid lookup until the limiter allows
+	// the next refresh — it serialises rather than skips. So the
+	// observable signal that the limiter is wired through is
+	// elapsed wall time across a burst of unknown-kid tokens.
+	//
+	// With a 200ms rate-every and three forged-kid requests, the
+	// first goes through immediately and the next two each wait
+	// ~200ms — total ~400ms elapsed. Without the limiter (or with
+	// it broken), all three would resolve in milliseconds.
+	f := newJWKSFixture(t)
+	a, err := auth.New(auth.ModeJWT, auth.Options{
+		JWT: auth.JWTConfig{
+			JWKSURL:              f.server.URL,
+			Issuer:               testIssuer,
+			Audience:             testAudience,
+			JWKSRefreshRateLimit: 200 * time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New(jwt): %v", err)
+	}
+
+	// Warm the cache with one valid request so the startup fetch
+	// isn't part of the elapsed-time measurement.
+	tok := f.signToken(t, defaultClaims(testIssuer, testAudience), "")
+	if _, err := a.Authenticate(reqWithBearer(tok)); err != nil {
+		t.Fatalf("warm-up Authenticate: %v", err)
+	}
+
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		c := defaultClaims(testIssuer, testAudience)
+		forged := f.signToken(t, c, fmt.Sprintf("forged-kid-%d", i))
+		_, _ = a.Authenticate(reqWithBearer(forged))
+	}
+	elapsed := time.Since(start)
+
+	// First request consumes the burst-1 token immediately. The
+	// remaining two wait ~200ms each — at least 300ms total is a
+	// safe lower bound that still tolerates timer jitter.
+	if elapsed < 300*time.Millisecond {
+		t.Errorf("limiter not engaged: elapsed=%v across 3 forged-kid requests (want >= 300ms)", elapsed)
+	}
+}

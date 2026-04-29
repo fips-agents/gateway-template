@@ -3,6 +3,7 @@ package config_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fips-agents/gateway-template/internal/config"
 )
@@ -180,6 +181,66 @@ func TestLoad_PlatformToggle_NoOpWhenURLUnset(t *testing.T) {
 	// they're cheap config knobs, not failure modes.
 	if got := cfg.SessionsTargetURL(); got != "http://agent:8080" {
 		t.Errorf("SessionsTargetURL = %q, want backend (URL unset)", got)
+	}
+}
+
+func TestLoad_JWKSRefreshRateLimit_DefaultZero(t *testing.T) {
+	cfg, err := loadWithEnv(t, jwtBaseEnv())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AuthJWTJWKSRefreshRateLimit != 0 {
+		t.Errorf("AuthJWTJWKSRefreshRateLimit = %v, want 0 (keyfunc default)", cfg.AuthJWTJWKSRefreshRateLimit)
+	}
+}
+
+func TestLoad_JWKSRefreshRateLimit_Parsed(t *testing.T) {
+	env := jwtBaseEnv()
+	env["GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT"] = "30s"
+
+	cfg, err := loadWithEnv(t, env)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.AuthJWTJWKSRefreshRateLimit, 30*time.Second; got != want {
+		t.Errorf("AuthJWTJWKSRefreshRateLimit = %v, want %v", got, want)
+	}
+}
+
+func TestLoad_JWKSRefreshRateLimit_Invalid(t *testing.T) {
+	env := jwtBaseEnv()
+	env["GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT"] = "thirty seconds"
+
+	_, err := loadWithEnv(t, env)
+	if err == nil {
+		t.Fatal("expected error on unparseable duration, got nil")
+	}
+	if !strings.Contains(err.Error(), "GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT") {
+		t.Errorf("error should reference the env var, got: %v", err)
+	}
+}
+
+func TestLoad_JWKSRefreshRateLimit_Negative(t *testing.T) {
+	env := jwtBaseEnv()
+	env["GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT"] = "-5s"
+
+	_, err := loadWithEnv(t, env)
+	if err == nil {
+		t.Fatal("expected error on negative duration, got nil")
+	}
+}
+
+func TestLoad_JWKSRefreshRateLimit_NotConsultedInAnonymousMode(t *testing.T) {
+	t.Setenv("BACKEND_URL", "http://backend:8081")
+	t.Setenv("GATEWAY_AUTH_MODE", "anonymous")
+	t.Setenv("GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT", "garbage")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load in anonymous mode should ignore the JWKS rate-limit var: %v", err)
+	}
+	if cfg.AuthJWTJWKSRefreshRateLimit != 0 {
+		t.Errorf("AuthJWTJWKSRefreshRateLimit = %v, want 0 in anonymous mode", cfg.AuthJWTJWKSRefreshRateLimit)
 	}
 }
 
