@@ -141,6 +141,7 @@ func (h *FilesUploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			upstream.Header.Set(name, v)
 		}
 	}
+	copyPropagationHeaders(upstream.Header, r.Header)
 
 	resp, err := h.Client.Do(upstream)
 	if err != nil {

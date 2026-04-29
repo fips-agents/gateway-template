@@ -143,6 +143,7 @@ func (h *ChatHandler) doBackendRequest(r *http.Request, body []byte) (*http.Resp
 			req.Header.Set(name, v)
 		}
 	}
+	copyPropagationHeaders(req.Header, r.Header)
 
 	return h.Client.Do(req)
 }

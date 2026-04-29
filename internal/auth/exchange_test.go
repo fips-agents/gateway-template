@@ -17,9 +17,10 @@ import (
 // exchangeFixture stands in for an RFC 8693 token endpoint. It records every
 // inbound request so tests can assert on form fields and cache behaviour.
 type exchangeFixture struct {
-	server   *httptest.Server
-	calls    atomic.Int64
-	lastForm url.Values
+	server      *httptest.Server
+	calls       atomic.Int64
+	lastForm    url.Values
+	lastHeaders http.Header
 
 	// response controls the next reply.
 	status      int
@@ -39,6 +40,7 @@ func newExchangeFixture(t *testing.T) *exchangeFixture {
 		f.calls.Add(1)
 		_ = r.ParseForm()
 		f.lastForm = r.PostForm
+		f.lastHeaders = r.Header.Clone()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(f.status)
 		if f.body != "" {
@@ -100,7 +102,7 @@ func TestTokenExchanger_HappyPath_PostsRFC8693Form(t *testing.T) {
 	f := newExchangeFixture(t)
 	ex := newExchanger(t, f, func(c *auth.TokenExchangeConfig) { c.Scope = "openid email" })
 
-	got, err := ex.Exchange(context.Background(), "user-jwt-input")
+	got, err := ex.Exchange(context.Background(), "user-jwt-input", nil)
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
@@ -128,11 +130,48 @@ func TestTokenExchanger_HappyPath_PostsRFC8693Form(t *testing.T) {
 	}
 }
 
+func TestTokenExchanger_PropagatesTraceContext(t *testing.T) {
+	// W3C Trace Context headers (traceparent / tracestate) on the inbound
+	// user request must land on the outbound POST to the authorization
+	// server's token endpoint, so trace tooling can correlate exchange-call
+	// latency with the user request that triggered it.
+	f := newExchangeFixture(t)
+	ex := newExchanger(t, f)
+
+	inbound := http.Header{}
+	inbound.Set("Traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	inbound.Set("Tracestate", "vendor=opaque-state")
+
+	if _, err := ex.Exchange(context.Background(), "user-jwt", inbound); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if got := f.lastHeaders.Get("Traceparent"); got != "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" {
+		t.Errorf("Traceparent on token-endpoint call = %q, want propagated value", got)
+	}
+	if got := f.lastHeaders.Get("Tracestate"); got != "vendor=opaque-state" {
+		t.Errorf("Tracestate on token-endpoint call = %q, want propagated value", got)
+	}
+}
+
+func TestTokenExchanger_NilHeadersOmitsPropagation(t *testing.T) {
+	// Programmatic / test callers pass nil; the exchanger must not blow up
+	// and must not invent headers the inbound request didn't carry.
+	f := newExchangeFixture(t)
+	ex := newExchanger(t, f)
+
+	if _, err := ex.Exchange(context.Background(), "user-jwt", nil); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if got := f.lastHeaders.Get("Traceparent"); got != "" {
+		t.Errorf("Traceparent should be absent when inbound headers nil, got %q", got)
+	}
+}
+
 func TestTokenExchanger_OmitsScopeWhenEmpty(t *testing.T) {
 	f := newExchangeFixture(t)
 	ex := newExchanger(t, f)
 
-	if _, err := ex.Exchange(context.Background(), "user-jwt"); err != nil {
+	if _, err := ex.Exchange(context.Background(), "user-jwt", nil); err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
 	if _, present := f.lastForm["scope"]; present {
@@ -145,7 +184,7 @@ func TestTokenExchanger_CachesByToken(t *testing.T) {
 	ex := newExchanger(t, f)
 
 	for i := 0; i < 3; i++ {
-		got, err := ex.Exchange(context.Background(), "same-input")
+		got, err := ex.Exchange(context.Background(), "same-input", nil)
 		if err != nil {
 			t.Fatalf("Exchange (iter %d): %v", i, err)
 		}
@@ -158,7 +197,7 @@ func TestTokenExchanger_CachesByToken(t *testing.T) {
 	}
 
 	// A different subject token must trigger a fresh call.
-	if _, err := ex.Exchange(context.Background(), "different-input"); err != nil {
+	if _, err := ex.Exchange(context.Background(), "different-input", nil); err != nil {
 		t.Fatalf("Exchange (different input): %v", err)
 	}
 	if got := f.calls.Load(); got != 2 {
@@ -175,7 +214,7 @@ func TestTokenExchanger_CacheRespectsExpiry(t *testing.T) {
 		c.Now = func() time.Time { return clock }
 	})
 
-	if _, err := ex.Exchange(context.Background(), "tok"); err != nil {
+	if _, err := ex.Exchange(context.Background(), "tok", nil); err != nil {
 		t.Fatalf("first Exchange: %v", err)
 	}
 	if got := f.calls.Load(); got != 1 {
@@ -184,7 +223,7 @@ func TestTokenExchanger_CacheRespectsExpiry(t *testing.T) {
 
 	// Within cache TTL → no new call.
 	clock = clock.Add(20 * time.Second)
-	if _, err := ex.Exchange(context.Background(), "tok"); err != nil {
+	if _, err := ex.Exchange(context.Background(), "tok", nil); err != nil {
 		t.Fatalf("cached Exchange: %v", err)
 	}
 	if got := f.calls.Load(); got != 1 {
@@ -194,7 +233,7 @@ func TestTokenExchanger_CacheRespectsExpiry(t *testing.T) {
 	// Past cache TTL (server expires_in 60s − 30s safety margin = 30s cap),
 	// jumping 45s forward should evict.
 	clock = clock.Add(45 * time.Second)
-	if _, err := ex.Exchange(context.Background(), "tok"); err != nil {
+	if _, err := ex.Exchange(context.Background(), "tok", nil); err != nil {
 		t.Fatalf("post-expiry Exchange: %v", err)
 	}
 	if got := f.calls.Load(); got != 2 {
@@ -209,7 +248,7 @@ func TestTokenExchanger_DoesNotCacheNearExpiryTokens(t *testing.T) {
 	ex := newExchanger(t, f)
 
 	for i := 0; i < 3; i++ {
-		if _, err := ex.Exchange(context.Background(), "tok"); err != nil {
+		if _, err := ex.Exchange(context.Background(), "tok", nil); err != nil {
 			t.Fatalf("Exchange (iter %d): %v", i, err)
 		}
 	}
@@ -228,12 +267,12 @@ func TestTokenExchanger_HonoursCacheTTLCap(t *testing.T) {
 		c.CacheTTLCap = 2 * time.Minute
 	})
 
-	if _, err := ex.Exchange(context.Background(), "tok"); err != nil {
+	if _, err := ex.Exchange(context.Background(), "tok", nil); err != nil {
 		t.Fatalf("first Exchange: %v", err)
 	}
 	// Cap should kick in well before the server's 1h.
 	clock = clock.Add(3 * time.Minute)
-	if _, err := ex.Exchange(context.Background(), "tok"); err != nil {
+	if _, err := ex.Exchange(context.Background(), "tok", nil); err != nil {
 		t.Fatalf("post-cap Exchange: %v", err)
 	}
 	if got := f.calls.Load(); got != 2 {
@@ -248,7 +287,7 @@ func TestTokenExchanger_4xxFails(t *testing.T) {
 
 	ex := newExchanger(t, f)
 
-	_, err := ex.Exchange(context.Background(), "tok")
+	_, err := ex.Exchange(context.Background(), "tok", nil)
 	if !errors.Is(err, auth.ErrExchangeFailed) {
 		t.Fatalf("want ErrExchangeFailed, got %v", err)
 	}
@@ -261,7 +300,7 @@ func TestTokenExchanger_5xxFails(t *testing.T) {
 
 	ex := newExchanger(t, f)
 
-	_, err := ex.Exchange(context.Background(), "tok")
+	_, err := ex.Exchange(context.Background(), "tok", nil)
 	if !errors.Is(err, auth.ErrExchangeFailed) {
 		t.Fatalf("want ErrExchangeFailed, got %v", err)
 	}
@@ -273,7 +312,7 @@ func TestTokenExchanger_MalformedJSONFails(t *testing.T) {
 
 	ex := newExchanger(t, f)
 
-	_, err := ex.Exchange(context.Background(), "tok")
+	_, err := ex.Exchange(context.Background(), "tok", nil)
 	if !errors.Is(err, auth.ErrExchangeFailed) {
 		t.Fatalf("want ErrExchangeFailed, got %v", err)
 	}
@@ -285,7 +324,7 @@ func TestTokenExchanger_MissingAccessTokenFails(t *testing.T) {
 
 	ex := newExchanger(t, f)
 
-	_, err := ex.Exchange(context.Background(), "tok")
+	_, err := ex.Exchange(context.Background(), "tok", nil)
 	if !errors.Is(err, auth.ErrExchangeFailed) {
 		t.Fatalf("want ErrExchangeFailed, got %v", err)
 	}
@@ -305,7 +344,7 @@ func TestTokenExchanger_TransportErrorFails(t *testing.T) {
 		t.Fatalf("NewTokenExchanger: %v", err)
 	}
 
-	_, err = ex.Exchange(context.Background(), "tok")
+	_, err = ex.Exchange(context.Background(), "tok", nil)
 	if !errors.Is(err, auth.ErrExchangeFailed) {
 		t.Fatalf("want ErrExchangeFailed, got %v", err)
 	}
@@ -318,7 +357,7 @@ func TestTokenExchanger_RequestUsesContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	_, err := ex.Exchange(ctx, "tok")
+	_, err := ex.Exchange(ctx, "tok", nil)
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
