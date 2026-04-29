@@ -19,6 +19,17 @@ data:
   GATEWAY_PLATFORM_ROUTE_TRACES: {{ .traces | default false | quote }}
   {{- end }}
   {{- end }}
+  {{- with .Values.files }}
+  {{- if .maxBytes }}
+  GATEWAY_FILES_MAX_BYTES: {{ .maxBytes | quote }}
+  {{- end }}
+  {{- if .allowedMime }}
+  GATEWAY_FILES_ALLOWED_MIME: {{ .allowedMime | quote }}
+  {{- end }}
+  {{- if .uploadTimeout }}
+  GATEWAY_FILES_UPLOAD_TIMEOUT: {{ .uploadTimeout | quote }}
+  {{- end }}
+  {{- end }}
   {{- if eq .Values.auth.mode "jwt" }}
   GATEWAY_AUTH_JWT_JWKS_URL: {{ required "auth.jwt.jwksUrl is required when auth.mode=jwt" .Values.auth.jwt.jwksUrl | quote }}
   GATEWAY_AUTH_JWT_ISSUER: {{ required "auth.jwt.issuer is required when auth.mode=jwt" .Values.auth.jwt.issuer | quote }}

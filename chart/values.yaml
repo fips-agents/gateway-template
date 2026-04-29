@@ -103,6 +103,27 @@ platform:
   sessions: true
   traces: true
 
+# -- File upload proxy (gateway-template#11) ---------------------------------
+# /v1/files multipart uploads stream through the gateway with a size cap and
+# a MIME-type allowlist enforced before any bytes reach the agent. The
+# allowlist may include wildcards (eg "image/*"); leaving it empty allows
+# every type that the agent itself accepts (the agent runs libmagic-based
+# content sniffing on its own and is the authoritative gate).
+files:
+  # Maximum upload size accepted by the gateway. Accepts a plain integer
+  # (bytes) or a value suffixed with k/m/g (binary). Requests advertising
+  # a Content-Length over this value are rejected with 413 before the
+  # body is read; chunked clients are interrupted by an http.MaxBytesReader.
+  maxBytes: "25m"
+  # Comma-separated MIME-type allowlist. Entries may be exact
+  # ("application/pdf") or wildcard ("image/*"). Leave empty to defer to
+  # the agent's own allowlist.
+  allowedMime: ""
+  # Per-request timeout for backend POST /v1/files calls. Larger than the
+  # gateway's default 120s so big uploads on slow links don't trip the
+  # gateway-side deadline before the agent finishes parsing.
+  uploadTimeout: "5m"
+
 service:
   port: 8080
 

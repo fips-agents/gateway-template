@@ -38,6 +38,9 @@ Client --> Gateway (:8080) --> Backend Agent
              +-- /v1/sessions/*        (any method, opaque proxy; routable to platform)
              +-- /v1/sessions/{id}/usage (GET, agent-only — pricing computed in-process)
              +-- /v1/traces/*          (any method, opaque proxy; routable to platform)
+             +-- /v1/files             (POST streaming multipart proxy; size cap + MIME allowlist)
+             +-- /v1/files             (GET pass-through, list)
+             +-- /v1/files/{file_id}   (GET/DELETE pass-through)
              +-- /v1/agent-info        (GET, pass-through to backend)
              +-- /healthz              (GET, liveness)
              +-- /readyz               (GET, checks backend)
@@ -81,6 +84,20 @@ Key packages:
 | `GATEWAY_PLATFORM_ROUTE_FEEDBACK` | No | `true` (when `PLATFORM_URL` set) | Route `/v1/feedback*` to platform. Set `false` to keep on agent. No-op when `PLATFORM_URL` unset. |
 | `GATEWAY_PLATFORM_ROUTE_SESSIONS` | No | `true` (when `PLATFORM_URL` set) | Route `/v1/sessions/*` to platform (except `/usage`, always agent). Set `false` to keep on agent. |
 | `GATEWAY_PLATFORM_ROUTE_TRACES` | No | `true` (when `PLATFORM_URL` set) | Route `/v1/traces/*` to platform. Set `false` to keep on agent. |
+| `GATEWAY_FILES_MAX_BYTES` | No | `26214400` (25 MiB) | Cap on multipart upload size. Accepts plain integers or values suffixed with `k`/`m`/`g` (binary). Requests over this size are rejected with 413 before the body is read; chunked clients are interrupted by `http.MaxBytesReader`. |
+| `GATEWAY_FILES_ALLOWED_MIME` | No | -- | Comma-separated MIME allowlist for the file part of `/v1/files` uploads. Entries may be exact (`application/pdf`) or wildcard (`image/*`). Empty defers entirely to the agent's own allowlist. |
+| `GATEWAY_FILES_UPLOAD_TIMEOUT` | No | `5m` | Per-request timeout for backend `POST /v1/files` calls. Larger than the chat-completion timeout so big uploads on slow links don't trip the gateway-side deadline before the agent finishes parsing. |
+
+## File upload proxy
+
+`POST /v1/files` is a streaming multipart proxy. The handler enforces two checks before forwarding:
+
+- **Size cap.** If the inbound `Content-Length` exceeds `GATEWAY_FILES_MAX_BYTES`, the gateway returns 413 immediately. For chunked or missing-`Content-Length` requests, an `http.MaxBytesReader` interrupts the body once the cap is hit.
+- **MIME allowlist.** The first multipart file part's declared `Content-Type` is validated synchronously against `GATEWAY_FILES_ALLOWED_MIME` *before* the upstream request fires. Disallowed types return 415 without ever contacting the backend. The agent runs its own libmagic-based content sniffing in `agent-template/packages/fipsagents/src/fipsagents/server/files.py` — gateway validation is defense in depth, not the authoritative gate.
+
+The body itself is never buffered: the handler reads the inbound multipart, re-encodes parts via `mime/multipart.Writer`, and pipes them into the upstream request body. Form fields encountered before the file part (eg `session_id`) are read into memory because they're tiny by spec; file part bodies stream through `io.Copy`.
+
+`GET /v1/files`, `GET /v1/files/{file_id}`, and `DELETE /v1/files/{file_id}` are opaque pass-throughs handled by the same `httputil.ReverseProxy` used for sessions/traces. Files are always agent-routed — there is no platform-side `/v1/files` surface today.
 
 ## Auth contract
 
