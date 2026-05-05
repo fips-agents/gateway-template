@@ -1,7 +1,8 @@
-PROJECT     ?= gateway-template
-IMAGE_NAME  ?= gateway-template
-IMAGE_TAG   ?= latest
-PORT        ?= 8080
+PROJECT       ?= gateway-template
+RELEASE_NAME  ?= gateway-template
+IMAGE_NAME    ?= gateway-template
+IMAGE_TAG     ?= latest
+PORT          ?= 8080
 
 .PHONY: build run test lint image-build build-openshift deploy clean help
 
@@ -20,18 +21,18 @@ lint:           ## Run go vet
 image-build:    ## Build container image
 	podman build --platform linux/amd64 -t $(IMAGE_NAME):$(IMAGE_TAG) -f Containerfile . --no-cache
 
-build-openshift: ## Build on OpenShift via BuildConfig (make build-openshift PROJECT=<ns>)
-	@if ! oc get bc $(PROJECT) -n $(PROJECT) &>/dev/null; then \
-		echo "Creating BuildConfig and ImageStream in $(PROJECT)..."; \
-		sed 's/PLACEHOLDER/$(PROJECT)/g' build/buildconfig.yaml | oc apply -n $(PROJECT) -f -; \
+build-openshift: ## Build on OpenShift via BuildConfig (PROJECT=<ns>, IMAGE_NAME=<bc/is>)
+	@if ! oc get bc $(IMAGE_NAME) -n $(PROJECT) &>/dev/null; then \
+		echo "Creating BuildConfig and ImageStream $(IMAGE_NAME) in $(PROJECT)..."; \
+		sed 's/PLACEHOLDER/$(IMAGE_NAME)/g' build/buildconfig.yaml | oc apply -n $(PROJECT) -f -; \
 	fi
-	oc start-build $(PROJECT) --from-dir=. -n $(PROJECT) --follow
+	oc start-build $(IMAGE_NAME) --from-dir=. -n $(PROJECT) --follow
 
-deploy:         ## Deploy to OpenShift via Helm (make deploy PROJECT=<ns>)
-	helm upgrade --install $(PROJECT) chart/ \
+deploy:         ## Deploy to OpenShift via Helm (PROJECT=<ns>, RELEASE_NAME=<release>, IMAGE_NAME=<is>)
+	helm upgrade --install $(RELEASE_NAME) chart/ \
 		-n $(PROJECT) \
-		--set image.repository=image-registry.openshift-image-registry.svc:5000/$(PROJECT)/$(PROJECT) \
-		--set image.tag=latest \
+		--set image.repository=image-registry.openshift-image-registry.svc:5000/$(PROJECT)/$(IMAGE_NAME) \
+		--set image.tag=$(IMAGE_TAG) \
 		--wait
 
 clean:          ## Remove build artifacts
