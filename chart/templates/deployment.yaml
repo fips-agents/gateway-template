@@ -11,6 +11,9 @@ spec:
       {{- include "gateway-template.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        # Roll pods on ConfigMap changes so `helm upgrade --reuse-values --set config.X=Y` takes effect.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         {{- include "gateway-template.selectorLabels" . | nindent 8 }}
     spec:
