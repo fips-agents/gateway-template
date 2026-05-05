@@ -402,6 +402,77 @@ func TestChatHandler_ForwardsTraceparent(t *testing.T) {
 	}
 }
 
+// TestChatHandler_ForwardsBodyVerbatim pins the transparent-passthrough
+// contract: the gateway must forward the request body byte-for-byte to the
+// backend, with no field stripping, reordering, or re-marshalling. This
+// keeps OpenAI content-block messages (text + image_url, future input_audio,
+// etc.) and any newer fields the upstream agent understands flowing through
+// without the gateway needing schema-level awareness.
+//
+// Concretely: messages[].content as an array of content blocks — the shape
+// shipped in fipsagents 0.20.0 for vision — must arrive at the backend
+// unchanged, including file_id:<id> URLs that the agent rewrites server-side.
+func TestChatHandler_ForwardsBodyVerbatim(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "image_url content block with file_id URL",
+			body: `{"model":"granite-vision","messages":[{"role":"user","content":[{"type":"text","text":"What color is this?"},{"type":"image_url","image_url":{"url":"file_id:abc123"}}]}],"stream":false}`,
+		},
+		{
+			name: "image_url content block with data URL",
+			body: `{"model":"granite-vision","messages":[{"role":"user","content":[{"type":"text","text":"Describe"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}],"stream":false}`,
+		},
+		{
+			name: "image_url content block with https URL",
+			body: `{"model":"granite-vision","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/cat.jpg"}}]}],"stream":false}`,
+		},
+		{
+			name: "future content-block type the gateway has never heard of",
+			body: `{"model":"m","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"…","format":"wav"}}]}],"stream":false}`,
+		},
+		{
+			name: "streaming request with image_url block",
+			body: `{"model":"granite-vision","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"file_id:xyz"}}]}],"stream":true}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured []byte
+
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("backend: read body: %v", err)
+				}
+				captured = b
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"id":"chatcmpl-x"}`))
+			}))
+			defer backend.Close()
+
+			h := &handler.ChatHandler{
+				BackendURL: backend.URL,
+				Client:     backend.Client(),
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			h.ServeHTTP(rec, req)
+
+			if string(captured) != tc.body {
+				t.Errorf("body not forwarded verbatim\n  want: %s\n  got:  %s", tc.body, string(captured))
+			}
+		})
+	}
+}
+
 func TestChatHandler_StreamingBackendError(t *testing.T) {
 	// Backend returns 500 on a streaming request -- gateway should forward the
 	// error status rather than switching to SSE mode.
