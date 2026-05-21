@@ -49,6 +49,8 @@ Client --> Gateway (:8080) --> Backend Agent
 
 **Platform routing mode (gateway-template#30, chart 0.5.0).** When `GATEWAY_PLATFORM_URL` is set, the three persistence prefixes (`/v1/feedback*`, `/v1/sessions/*`, `/v1/traces/*`) proxy to a deployed [`fipsagents-platform`](https://github.com/fips-agents/fipsagents-platform) service instead of fanning out to per-agent backends. Per-prefix toggles (`GATEWAY_PLATFORM_ROUTE_{FEEDBACK,SESSIONS,TRACES}`) default to `true` when `PLATFORM_URL` is set; flip individual ones to `false` to keep that prefix on the agent. `GET /v1/sessions/{id}/usage` is always agent-routed because it computes USD cost from the agent's `PricingConfig` and is not a platform endpoint. The forwarding handler (`internal/handler/forward.go`, `httputil.ReverseProxy`-based) preserves method, body, query string, `Authorization`, `X-Auth-*`, `X-Tenant`, and `traceparent` headers verbatim — it does not parse request bodies.
 
+**Multi-backend routing (gateway-template#3).** When `BACKEND_<name>` env vars or a YAML routing table (`GATEWAY_ROUTING_CONFIG`) are configured, the gateway can proxy to multiple agent backends. `POST /v1/chat/completions` routes by the `model` field in the JSON body. All other agent-routed endpoints route by the `X-Backend` request header. Unmatched or missing routing signals fall back to `BACKEND_URL`. Platform routing takes precedence -- when `GATEWAY_PLATFORM_URL` is set and a prefix toggle is on, that prefix routes to platform regardless of `X-Backend`.
+
 Key packages:
 - `cmd/server/` -- entry point, wiring, graceful shutdown
 - `internal/config/` -- environment variable parsing
@@ -90,6 +92,8 @@ Key packages:
 | `GATEWAY_FILES_UPLOAD_TIMEOUT` | No | `5m` | Per-request timeout for backend `POST /v1/files` calls. Larger than the chat-completion timeout so big uploads on slow links don't trip the gateway-side deadline before the agent finishes parsing. |
 | `GATEWAY_RATE_LIMIT_RPS` | No | `0` (disabled) | Sustained request rate (requests/second) per client IP. Both RPS and BURST must be set to enable rate limiting. Returns 429 with `Retry-After` when exceeded. |
 | `GATEWAY_RATE_LIMIT_BURST` | No | `0` (disabled) | Token bucket capacity per client IP. Must be >= RPS. |
+| `BACKEND_<name>` | No | -- | Additional backend URLs for multi-backend routing. Name (case-insensitive) is used as the backend identifier. |
+| `GATEWAY_ROUTING_CONFIG` | No | -- | Path to YAML routing config file. Defines backends and model-to-backend route mappings. |
 
 ## File upload proxy
 

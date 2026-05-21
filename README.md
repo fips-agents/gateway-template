@@ -43,6 +43,47 @@ curl http://localhost:8080/healthz
 | `GATEWAY_FILES_ALLOWED_MIME` | No | -- | Comma-separated MIME allowlist for `POST /v1/files`. Exact (`application/pdf`) or wildcard (`image/*`). Empty defers to the agent. |
 | `GATEWAY_FILES_UPLOAD_TIMEOUT` | No | `5m` | Per-request timeout for backend `POST /v1/files`. |
 
+## Multi-Backend Routing
+
+The gateway can proxy to multiple agent backends. `POST /v1/chat/completions` routes by the `model` field in the request body; all other agent-routed endpoints route by the `X-Backend` request header. Unmatched or missing routing signals fall back to `BACKEND_URL`.
+
+**Via environment variables:**
+
+```bash
+BACKEND_URL=http://default-agent:8080      # fallback
+BACKEND_CODE_AGENT=http://code-agent:8080
+BACKEND_RESEARCH_AGENT=http://research-agent:8080
+```
+
+**Via YAML config file** (`GATEWAY_ROUTING_CONFIG=/etc/gateway/routing.yaml`):
+
+```yaml
+backends:
+  code-agent: http://code-agent:8080
+  research-agent: http://research-agent:8080
+
+routes:
+  - model: "gpt-4*"
+    backend: code-agent
+  - model: "research-*"
+    backend: research-agent
+```
+
+**Usage examples:**
+
+```bash
+# Route by model field (chat completions)
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "research-v2", "messages": [{"role": "user", "content": "hello"}]}'
+
+# Route by X-Backend header (other endpoints)
+curl http://localhost:8080/v1/agent-info \
+  -H "X-Backend: code-agent"
+```
+
+When platform routing is also configured (`GATEWAY_PLATFORM_URL`), platform-routed prefixes take precedence regardless of `X-Backend`.
+
 ## File uploads
 
 `POST /v1/files` is proxied to the agent as a streaming multipart upload. Two checks run before any byte reaches the agent:

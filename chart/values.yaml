@@ -16,6 +16,19 @@ resources:
 config:
   BACKEND_URL: http://my-agent:8080
 
+# Multi-backend routing (optional). When configured, the gateway can
+# proxy to multiple agent backends. Chat completions route by the
+# model field; other endpoints use the X-Backend request header.
+# BACKEND_URL (config.BACKEND_URL) is always the fallback.
+routing:
+  # Named backends. Each key becomes BACKEND_<NAME> env var.
+  backends: {}
+    # code-agent: http://code-agent:8080
+    # research-agent: http://research-agent:8080
+  # Path to a YAML routing config file (must be mounted separately).
+  # Sets GATEWAY_ROUTING_CONFIG env var.
+  configFile: ""
+
 # Inbound auth strategy. See internal/auth and gateway-template#21 / #23.
 #   anonymous (default) — no validation, X-Auth-Subject is "anonymous".
 #                         Use for local dev, smoke tests, or any deployment

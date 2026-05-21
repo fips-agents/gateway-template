@@ -30,6 +30,12 @@ data:
   GATEWAY_FILES_UPLOAD_TIMEOUT: {{ .uploadTimeout | quote }}
   {{- end }}
   {{- end }}
+  {{- range $name, $url := .Values.routing.backends }}
+  BACKEND_{{ $name | upper }}: {{ $url | quote }}
+  {{- end }}
+  {{- with .Values.routing.configFile }}
+  GATEWAY_ROUTING_CONFIG: {{ . | quote }}
+  {{- end }}
   {{- if eq .Values.auth.mode "jwt" }}
   GATEWAY_AUTH_JWT_JWKS_URL: {{ required "auth.jwt.jwksUrl is required when auth.mode=jwt" .Values.auth.jwt.jwksUrl | quote }}
   GATEWAY_AUTH_JWT_ISSUER: {{ required "auth.jwt.issuer is required when auth.mode=jwt" .Values.auth.jwt.issuer | quote }}
