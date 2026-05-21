@@ -111,3 +111,88 @@ func TestRelaySSE_BackendClosesWithoutDone(t *testing.T) {
 		t.Errorf("RelaySSE: missing data from truncated stream:\n%s", body)
 	}
 }
+
+func TestRelaySSE_UsageCallback(t *testing.T) {
+	ssePayload := strings.Join([]string{
+		`data: {"id":"1","choices":[{"delta":{"content":"Hello"}}]}`,
+		"",
+		`data: {"id":"1","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	resp := fakeResponse(ssePayload)
+	rec := httptest.NewRecorder()
+
+	var captured int64
+	proxy.RelaySSE(resp, rec, proxy.WithUsageCallback(func(tokens int64) {
+		captured = tokens
+	}))
+
+	if captured != 15 {
+		t.Errorf("UsageCallback: expected total_tokens=15, got %d", captured)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"content":"Hello"`) {
+		t.Errorf("RelaySSE: missing first data event in output:\n%s", body)
+	}
+	if !strings.Contains(body, `"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}`) {
+		t.Errorf("RelaySSE: missing usage data event in output:\n%s", body)
+	}
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Errorf("RelaySSE: missing DONE terminator in output:\n%s", body)
+	}
+}
+
+func TestRelaySSE_UsageCallback_NoUsageField(t *testing.T) {
+	ssePayload := strings.Join([]string{
+		`data: {"id":"1","choices":[{"delta":{"content":"Hello"}}]}`,
+		"",
+		`data: {"id":"1","choices":[{"finish_reason":"stop"}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	resp := fakeResponse(ssePayload)
+	rec := httptest.NewRecorder()
+
+	var captured int64
+	proxy.RelaySSE(resp, rec, proxy.WithUsageCallback(func(tokens int64) {
+		captured = tokens
+	}))
+
+	if captured != 0 {
+		t.Errorf("UsageCallback: expected no callback when usage field missing, but got total_tokens=%d", captured)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"content":"Hello"`) {
+		t.Errorf("RelaySSE: missing data event in output:\n%s", body)
+	}
+}
+
+func TestRelaySSE_NoCallback_BackwardCompat(t *testing.T) {
+	ssePayload := strings.Join([]string{
+		`data: {"id":"1","choices":[{"delta":{"content":"Hello"}}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	resp := fakeResponse(ssePayload)
+	rec := httptest.NewRecorder()
+
+	// Call RelaySSE without any options - should not panic
+	proxy.RelaySSE(resp, rec)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"content":"Hello"`) {
+		t.Errorf("RelaySSE: missing data event in output:\n%s", body)
+	}
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Errorf("RelaySSE: missing DONE terminator in output:\n%s", body)
+	}
+}
