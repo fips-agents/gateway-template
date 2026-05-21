@@ -9,6 +9,9 @@ PORT          ?= 8080
 build:          ## Build the gateway binary
 	go build -o bin/server ./cmd/server
 
+build-fips:     ## Build with FIPS-validated crypto (BoringCrypto)
+	GOEXPERIMENT=boringcrypto go build -o bin/server ./cmd/server
+
 run:            ## Run locally (requires BACKEND_URL)
 	BACKEND_URL=$${BACKEND_URL:-http://localhost:8081} go run ./cmd/server
 
@@ -20,6 +23,9 @@ lint:           ## Run go vet
 
 image-build:    ## Build container image
 	podman build --platform linux/amd64 -t $(IMAGE_NAME):$(IMAGE_TAG) -f Containerfile . --no-cache
+
+image-build-fips: ## Build container image with FIPS crypto
+	podman build --platform linux/amd64 --build-arg FIPS=1 -t $(IMAGE_NAME):$(IMAGE_TAG)-fips -f Containerfile . --no-cache
 
 build-openshift: ## Build on OpenShift via BuildConfig (PROJECT=<ns>, IMAGE_NAME=<bc/is>)
 	@if ! oc get bc $(IMAGE_NAME) -n $(PROJECT) &>/dev/null; then \

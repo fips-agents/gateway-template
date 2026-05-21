@@ -1,12 +1,18 @@
 # Stage 1: Build
 FROM registry.redhat.io/ubi9/go-toolset:1.22 AS builder
 
+ARG FIPS=0
+
 WORKDIR /opt/app-root/src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-RUN go build -o ./gateway ./cmd/server
+RUN if [ "$FIPS" = "1" ]; then \
+      GOEXPERIMENT=boringcrypto go build -o ./gateway ./cmd/server; \
+    else \
+      go build -o ./gateway ./cmd/server; \
+    fi
 
 # Stage 2: Runtime
 FROM registry.redhat.io/ubi9/ubi-minimal:latest

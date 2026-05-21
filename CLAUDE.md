@@ -145,6 +145,21 @@ helm upgrade --install my-gateway chart/ \
   --set image.repository=image-registry.openshift-image-registry.svc:5000/my-namespace/gateway-template
 ```
 
+## FIPS TLS posture
+
+The gateway does not terminate TLS itself — OpenShift Route handles edge TLS termination with a FIPS-validated module. Inside the cluster, the binary speaks plain HTTP between pods. This is the recommended deployment model and requires no special build flags.
+
+For environments that require the gateway to terminate TLS directly (passthrough routes, non-OpenShift deployments, or mTLS between services), build with FIPS-validated crypto:
+
+```bash
+make build-fips                 # local binary with BoringCrypto
+make image-build-fips           # container image with BoringCrypto
+```
+
+This sets `GOEXPERIMENT=boringcrypto`, which replaces Go's stdlib crypto with BoringSSL (Google's FIPS 140-2 validated module) at compile time. All TLS and cryptographic operations — including JWT signature validation in `jwt` auth mode — then route through the validated module.
+
+The `jwt` auth mode uses RS256/ES256 (FIPS-approved algorithms) exclusively; HS256 with shared secrets is not supported. See gateway-template#8.
+
 ## Sentinel Values
 
 This is a template repository. The string `gateway-template` appears throughout and is replaced with the actual project name during scaffolding by `fips-agents create gateway <name>`.
