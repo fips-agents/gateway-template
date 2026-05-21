@@ -28,10 +28,11 @@ const (
 
 // Canonical header names emitted to the backend.
 const (
-	HeaderSubject = "X-Auth-Subject"
-	HeaderUser    = "X-Auth-User"
-	HeaderEmail   = "X-Auth-Email"
-	HeaderMode    = "X-Auth-Mode"
+	HeaderSubject  = "X-Auth-Subject"
+	HeaderUser     = "X-Auth-User"
+	HeaderEmail    = "X-Auth-Email"
+	HeaderMode     = "X-Auth-Mode"
+	HeaderTenantID = "X-Tenant-ID"
 )
 
 // CanonicalHeaders lists every header the gateway issues. Inbound copies
@@ -41,6 +42,7 @@ var CanonicalHeaders = []string{
 	HeaderUser,
 	HeaderEmail,
 	HeaderMode,
+	HeaderTenantID,
 }
 
 // Identity is the resolved caller identity.
@@ -49,6 +51,10 @@ type Identity struct {
 	User    string
 	Email   string
 	Mode    string
+	// TenantID is the organizational tenant resolved from the configured
+	// tenant claim (jwt mode) or upstream header (proxy mode). Empty when
+	// no tenant extraction is configured or the claim/header was absent.
+	TenantID string
 	// BearerToken is the value the middleware will project as
 	// `Authorization: Bearer <token>` to the backend. Empty means the
 	// middleware strips Authorization from the inbound request — the gateway
@@ -63,6 +69,10 @@ type Identity struct {
 // anonymous.
 var ErrMissingProxyHeaders = errors.New("auth: proxy mode but upstream identity headers are missing")
 
+// ErrMissingTenant signals that tenant identity was required but the strategy
+// did not resolve a tenant ID. Used by the middleware for enforcement mode.
+var ErrMissingTenant = errors.New("auth: tenant identity required")
+
 // Authenticator resolves an Identity from an inbound request. Implementations
 // must not mutate r.
 type Authenticator interface {
@@ -72,9 +82,10 @@ type Authenticator interface {
 // Options bundles every parameter New() may consume. Each field is only
 // consulted by the corresponding mode; unused fields are ignored.
 type Options struct {
-	// ProxyUserHeader / ProxyEmailHeader are consulted only in proxy mode.
-	ProxyUserHeader  string
-	ProxyEmailHeader string
+	// ProxyUserHeader / ProxyEmailHeader / ProxyTenantHeader are consulted only in proxy mode.
+	ProxyUserHeader   string
+	ProxyEmailHeader  string
+	ProxyTenantHeader string
 
 	// JWT is consulted only in jwt mode.
 	JWT JWTConfig
@@ -98,8 +109,9 @@ func New(mode string, opts Options) (Authenticator, error) {
 			return nil, fmt.Errorf("auth: proxy mode requires a non-empty user header name")
 		}
 		return &ProxyAuth{
-			UserHeader:  opts.ProxyUserHeader,
-			EmailHeader: opts.ProxyEmailHeader,
+			UserHeader:   opts.ProxyUserHeader,
+			EmailHeader:  opts.ProxyEmailHeader,
+			TenantHeader: opts.ProxyTenantHeader,
 		}, nil
 	case ModeJWT:
 		return NewJWTAuth(opts.JWT, opts.JWTExchanger)
@@ -134,6 +146,9 @@ type ProxyAuth struct {
 	// "X-Forwarded-Email". Optional — when empty or unset the resolved
 	// identity has no email.
 	EmailHeader string
+	// TenantHeader is the request header carrying the tenant ID. Optional —
+	// when empty or unset the resolved identity has no tenant.
+	TenantHeader string
 }
 
 // Authenticate reads the configured upstream headers and projects them
@@ -150,10 +165,16 @@ func (p *ProxyAuth) Authenticate(r *http.Request) (Identity, error) {
 		email = r.Header.Get(p.EmailHeader)
 	}
 
+	tenant := ""
+	if p.TenantHeader != "" {
+		tenant = r.Header.Get(p.TenantHeader)
+	}
+
 	return Identity{
-		Subject: user,
-		User:    user,
-		Email:   email,
-		Mode:    ModeProxy,
+		Subject:  user,
+		User:     user,
+		Email:    email,
+		Mode:     ModeProxy,
+		TenantID: tenant,
 	}, nil
 }

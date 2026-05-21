@@ -35,6 +35,9 @@ type JWTConfig struct {
 	SubjectClaim string
 	UserClaim    string
 	EmailClaim   string
+	// TenantClaim is the JWT claim to extract as tenant identity (e.g.
+	// "org_id", "tenant"). Empty means no tenant extraction.
+	TenantClaim  string
 
 	// JWKSRefreshRateLimit caps how often the JWKS client will refresh
 	// the remote key set in response to a token bearing a `kid` it has
@@ -162,11 +165,17 @@ func (j *JWTAuth) Authenticate(r *http.Request) (Identity, error) {
 		return Identity{}, fmt.Errorf("%w: missing %q claim", ErrInvalidToken, j.cfg.SubjectClaim)
 	}
 
+	tenant := ""
+	if j.cfg.TenantClaim != "" {
+		tenant = stringClaim(claims, j.cfg.TenantClaim)
+	}
+
 	id := Identity{
-		Subject: subject,
-		User:    stringClaim(claims, j.cfg.UserClaim),
-		Email:   stringClaim(claims, j.cfg.EmailClaim),
-		Mode:    ModeJWT,
+		Subject:  subject,
+		User:     stringClaim(claims, j.cfg.UserClaim),
+		Email:    stringClaim(claims, j.cfg.EmailClaim),
+		TenantID: tenant,
+		Mode:     ModeJWT,
 	}
 
 	if j.exchanger != nil {
