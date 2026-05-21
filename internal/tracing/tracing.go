@@ -19,7 +19,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -71,8 +71,9 @@ func Init(ctx context.Context, serviceName, serviceVersion string) (func(context
 // rather than the client's original — the gateway becomes a visible hop in
 // the distributed trace.
 //
-// When no TracerProvider is configured (Init was not called or endpoint was
-// empty), the global tracer is a no-op and this middleware adds no overhead.
+// The caller should gate this middleware on OTEL_EXPORTER_OTLP_ENDPOINT being
+// set — the no-op tracer still allocates per-request, so skipping the
+// middleware entirely is preferred when tracing is disabled.
 func Middleware(next http.Handler) http.Handler {
 	tracer := otel.Tracer("gateway-template")
 	propagator := otel.GetTextMapPropagator()

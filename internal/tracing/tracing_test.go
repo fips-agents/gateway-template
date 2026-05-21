@@ -35,14 +35,18 @@ func TestInit_NoOpWhenEndpointUnset(t *testing.T) {
 }
 
 func TestInit_InitializesWhenEndpointSet(t *testing.T) {
-	// NOTE: This test would verify full initialization, but there's a schema
-	// version conflict between resource.Default() (schema 1.40.0) and the
-	// semconv v1.26.0 imported in tracing.go. This is a known issue that
-	// requires updating the semconv import to a newer version.
-	//
-	// For now, we skip this test. The middleware tests verify that tracing
-	// works end-to-end when properly initialized.
-	t.Skip("Schema version conflict between resource.Default() and semconv v1.26.0 - update semconv import to fix")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+
+	shutdown, err := tracing.Init(context.Background(), "test-service", "0.1.0")
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if shutdown == nil {
+		t.Fatal("shutdown function should not be nil")
+	}
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
 }
 
 func TestMiddleware_CreatesSpan(t *testing.T) {

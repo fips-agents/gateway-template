@@ -200,7 +200,9 @@ func main() {
 		rootHandler = middleware.LogRequests(rootHandler)
 	}
 	rootHandler = middleware.RequestID(rootHandler)
-	rootHandler = tracing.Middleware(rootHandler)
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		rootHandler = tracing.Middleware(rootHandler)
+	}
 	if cfg.TenantRateLimitEnabled() {
 		rootHandler = middleware.NewTenantRateLimiter(cfg.TenantRateLimitRPS, cfg.TenantRateLimitBurst)(rootHandler)
 	}
