@@ -163,3 +163,52 @@ func TestProxyAuth_EmptyEmailHeaderName(t *testing.T) {
 		t.Errorf("expected empty email when EmailHeader unset, got %q", id.Email)
 	}
 }
+
+func TestProxyAuth_TenantHeader(t *testing.T) {
+	tests := []struct {
+		name         string
+		tenantHeader string
+		requestHdrs  map[string]string
+		wantTenant   string
+	}{
+		{
+			name:         "tenant header configured and present",
+			tenantHeader: "X-Tenant",
+			requestHdrs:  map[string]string{"X-Forwarded-User": "alice", "X-Tenant": "acme"},
+			wantTenant:   "acme",
+		},
+		{
+			name:         "tenant header configured but absent",
+			tenantHeader: "X-Tenant",
+			requestHdrs:  map[string]string{"X-Forwarded-User": "alice"},
+			wantTenant:   "",
+		},
+		{
+			name:         "tenant header not configured",
+			tenantHeader: "",
+			requestHdrs:  map[string]string{"X-Forwarded-User": "alice", "X-Tenant": "acme"},
+			wantTenant:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &auth.ProxyAuth{
+				UserHeader:   "X-Forwarded-User",
+				TenantHeader: tt.tenantHeader,
+			}
+			req := httptest.NewRequest("GET", "/", nil)
+			for k, v := range tt.requestHdrs {
+				req.Header.Set(k, v)
+			}
+
+			id, err := p.Authenticate(req)
+			if err != nil {
+				t.Fatalf("Authenticate: unexpected error: %v", err)
+			}
+			if id.TenantID != tt.wantTenant {
+				t.Errorf("TenantID: got %q, want %q", id.TenantID, tt.wantTenant)
+			}
+		})
+	}
+}

@@ -257,3 +257,168 @@ func TestLoad_JWTExchange_NotConsultedInAnonymousMode(t *testing.T) {
 		t.Fatalf("Load in anonymous mode should ignore exchange env vars: %v", err)
 	}
 }
+
+func TestLoad_TenantConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVars  map[string]string
+		validate func(t *testing.T, cfg *config.Config)
+	}{
+		{
+			name: "tenant claim parsed in jwt mode",
+			envVars: map[string]string{
+				"GATEWAY_AUTH_JWT_TENANT_CLAIM": "org_id",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.AuthJWTTenantClaim != "org_id" {
+					t.Errorf("AuthJWTTenantClaim = %q, want %q", cfg.AuthJWTTenantClaim, "org_id")
+				}
+			},
+		},
+		{
+			name:    "tenant claim default empty",
+			envVars: map[string]string{},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.AuthJWTTenantClaim != "" {
+					t.Errorf("AuthJWTTenantClaim = %q, want empty", cfg.AuthJWTTenantClaim)
+				}
+			},
+		},
+		{
+			name: "proxy tenant header parsed",
+			envVars: map[string]string{
+				"GATEWAY_AUTH_MODE":               "proxy",
+				"GATEWAY_AUTH_PROXY_TENANT_HEADER": "X-Org-Id",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.AuthProxyTenantHeader != "X-Org-Id" {
+					t.Errorf("AuthProxyTenantHeader = %q, want %q", cfg.AuthProxyTenantHeader, "X-Org-Id")
+				}
+			},
+		},
+		{
+			name:    "tenant enforce default false",
+			envVars: map[string]string{},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.TenantEnforce {
+					t.Error("TenantEnforce = true, want false")
+				}
+			},
+		},
+		{
+			name: "tenant enforce true",
+			envVars: map[string]string{
+				"GATEWAY_TENANT_ENFORCE": "true",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if !cfg.TenantEnforce {
+					t.Error("TenantEnforce = false, want true")
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := jwtBaseEnv()
+			for k, v := range tc.envVars {
+				env[k] = v
+			}
+
+			cfg, err := loadWithEnv(t, env)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			tc.validate(t, cfg)
+		})
+	}
+}
+
+func TestLoad_TenantRateLimit(t *testing.T) {
+	tests := []struct {
+		name      string
+		rps       string
+		burst     string
+		wantError bool
+		validate  func(t *testing.T, cfg *config.Config)
+	}{
+		{
+			name:  "both RPS and burst set",
+			rps:   "10",
+			burst: "20",
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.TenantRateLimitRPS != 10 {
+					t.Errorf("TenantRateLimitRPS = %d, want 10", cfg.TenantRateLimitRPS)
+				}
+				if cfg.TenantRateLimitBurst != 20 {
+					t.Errorf("TenantRateLimitBurst = %d, want 20", cfg.TenantRateLimitBurst)
+				}
+				if !cfg.TenantRateLimitEnabled() {
+					t.Error("TenantRateLimitEnabled() = false, want true")
+				}
+			},
+		},
+		{
+			name:      "burst without RPS rejected",
+			rps:       "0",
+			burst:     "5",
+			wantError: true,
+		},
+		{
+			name:      "burst less than RPS rejected",
+			rps:       "10",
+			burst:     "5",
+			wantError: true,
+		},
+		{
+			name:  "disabled by default",
+			rps:   "",
+			burst: "",
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.TenantRateLimitEnabled() {
+					t.Error("TenantRateLimitEnabled() = true, want false")
+				}
+			},
+		},
+		{
+			name:  "enabled when both set",
+			rps:   "10",
+			burst: "20",
+			validate: func(t *testing.T, cfg *config.Config) {
+				if !cfg.TenantRateLimitEnabled() {
+					t.Error("TenantRateLimitEnabled() = false, want true")
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := jwtBaseEnv()
+			if tc.rps != "" {
+				env["GATEWAY_TENANT_RATE_LIMIT_RPS"] = tc.rps
+			}
+			if tc.burst != "" {
+				env["GATEWAY_TENANT_RATE_LIMIT_BURST"] = tc.burst
+			}
+
+			cfg, err := loadWithEnv(t, env)
+
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if tc.validate != nil {
+				tc.validate(t, cfg)
+			}
+		})
+	}
+}

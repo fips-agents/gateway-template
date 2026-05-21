@@ -535,3 +535,65 @@ func TestJWTAuth_UnknownKidRefreshIsRateLimited(t *testing.T) {
 		t.Errorf("limiter not engaged: elapsed=%v across 3 forged-kid requests (want >= 300ms)", elapsed)
 	}
 }
+
+func TestJWTAuth_TenantClaim(t *testing.T) {
+	tests := []struct {
+		name        string
+		tenantClaim string
+		claims      jwt.MapClaims
+		wantTenant  string
+	}{
+		{
+			name:        "tenant claim configured and present",
+			tenantClaim: "org_id",
+			claims: func() jwt.MapClaims {
+				c := defaultClaims(testIssuer, testAudience)
+				c["org_id"] = "acme"
+				return c
+			}(),
+			wantTenant: "acme",
+		},
+		{
+			name:        "tenant claim configured but absent",
+			tenantClaim: "org_id",
+			claims:      defaultClaims(testIssuer, testAudience),
+			wantTenant:  "",
+		},
+		{
+			name:        "tenant claim not configured",
+			tenantClaim: "",
+			claims: func() jwt.MapClaims {
+				c := defaultClaims(testIssuer, testAudience)
+				c["org_id"] = "acme"
+				return c
+			}(),
+			wantTenant: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newJWKSFixture(t)
+			a, err := auth.New(auth.ModeJWT, auth.Options{
+				JWT: auth.JWTConfig{
+					JWKSURL:     f.server.URL,
+					Issuer:      testIssuer,
+					Audience:    testAudience,
+					TenantClaim: tt.tenantClaim,
+				},
+			})
+			if err != nil {
+				t.Fatalf("New(jwt): %v", err)
+			}
+
+			tok := f.signToken(t, tt.claims, "")
+			id, err := a.Authenticate(reqWithBearer(tok))
+			if err != nil {
+				t.Fatalf("Authenticate: unexpected error: %v", err)
+			}
+			if id.TenantID != tt.wantTenant {
+				t.Errorf("TenantID: got %q, want %q", id.TenantID, tt.wantTenant)
+			}
+		})
+	}
+}

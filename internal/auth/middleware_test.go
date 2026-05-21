@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fips-agents/gateway-template/internal/auth"
@@ -256,5 +257,143 @@ func TestMiddleware_ProjectsBearerTokenFromIdentity(t *testing.T) {
 
 	if got := cap.got.Get("Authorization"); got != "Bearer swapped-for-backend" {
 		t.Errorf("Authorization: got %q, want %q", got, "Bearer swapped-for-backend")
+	}
+}
+
+func TestMiddlewareWithConfig_TenantEnforce(t *testing.T) {
+	tests := []struct {
+		name           string
+		enforce        bool
+		tenantID       string
+		wantStatus     int
+		wantBodyString string
+	}{
+		{
+			name:       "enforce=true, tenant present",
+			enforce:    true,
+			tenantID:   "acme",
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:           "enforce=true, tenant empty",
+			enforce:        true,
+			tenantID:       "",
+			wantStatus:     http.StatusForbidden,
+			wantBodyString: "tenant identity required",
+		},
+		{
+			name:       "enforce=false, tenant empty",
+			enforce:    false,
+			tenantID:   "",
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:       "enforce=false, tenant present",
+			enforce:    false,
+			tenantID:   "acme",
+			wantStatus: http.StatusNoContent,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cap := &captureHandler{}
+			stub := stubAuth{id: auth.Identity{
+				Subject:  "user-123",
+				Mode:     auth.ModeJWT,
+				TenantID: tt.tenantID,
+			}}
+			h := auth.MiddlewareWithConfig(stub, auth.MiddlewareConfig{
+				TenantEnforce: tt.enforce,
+			})(cap)
+
+			req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status: got %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if tt.wantBodyString != "" {
+				body := rec.Body.String()
+				// The middleware returns JSON: {"error":"message"}
+				if !strings.Contains(body, tt.wantBodyString) {
+					t.Errorf("body should contain %q, got %q", tt.wantBodyString, body)
+				}
+			}
+			// When request passes through, verify the tenant header is set correctly
+			if tt.wantStatus == http.StatusNoContent && tt.tenantID != "" {
+				if got := cap.got.Get(auth.HeaderTenantID); got != tt.tenantID {
+					t.Errorf("X-Tenant-ID: got %q, want %q", got, tt.tenantID)
+				}
+			}
+		})
+	}
+}
+
+func TestMiddleware_StripsInboundXTenantID(t *testing.T) {
+	cap := &captureHandler{}
+	stub := stubAuth{id: auth.Identity{
+		Subject:  "user-123",
+		Mode:     auth.ModeJWT,
+		TenantID: "real-tenant",
+	}}
+	h := auth.Middleware(stub)(cap)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	req.Header.Set("X-Tenant-ID", "spoofed-tenant")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204", rec.Code)
+	}
+	if got := cap.got.Get(auth.HeaderTenantID); got != "real-tenant" {
+		t.Errorf("X-Tenant-ID: got %q, want real-tenant (spoofed value leaked)", got)
+	}
+}
+
+func TestMiddleware_ProjectsTenantID(t *testing.T) {
+	cap := &captureHandler{}
+	stub := stubAuth{id: auth.Identity{
+		Subject:  "user-123",
+		Mode:     auth.ModeJWT,
+		TenantID: "acme",
+	}}
+	h := auth.Middleware(stub)(cap)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204", rec.Code)
+	}
+	if got := cap.got.Get(auth.HeaderTenantID); got != "acme" {
+		t.Errorf("X-Tenant-ID: got %q, want acme", got)
+	}
+}
+
+func TestMiddleware_ProbesSkipTenantEnforcement(t *testing.T) {
+	// With TenantEnforce: true, verify /healthz returns 200
+	// (probes bypass auth entirely, so enforcement doesn't apply)
+	cap := &captureHandler{}
+	stub := stubAuth{id: auth.Identity{
+		Subject:  "anonymous",
+		Mode:     auth.ModeAnonymous,
+		TenantID: "",
+	}}
+	h := auth.MiddlewareWithConfig(stub, auth.MiddlewareConfig{
+		TenantEnforce: true,
+	})(cap)
+
+	for _, path := range []string{"/healthz", "/readyz", "/.well-known/agent.json"} {
+		req := httptest.NewRequest("GET", path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("path %q: probe should bypass tenant enforcement, got %d", path, rec.Code)
+		}
 	}
 }
