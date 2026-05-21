@@ -422,3 +422,19 @@ func TestLoad_TenantRateLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_TenantEnforce_RejectsAnonymousMode(t *testing.T) {
+	env := map[string]string{
+		"BACKEND_URL":            "http://localhost:8081",
+		"GATEWAY_AUTH_MODE":      "anonymous",
+		"GATEWAY_TENANT_ENFORCE": "true",
+	}
+	_, err := loadWithEnv(t, env)
+	if err == nil {
+		t.Fatal("expected error for TenantEnforce + anonymous mode, got nil")
+	}
+	want := "incompatible with GATEWAY_AUTH_MODE=anonymous"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want substring %q", err, want)
+	}
+}

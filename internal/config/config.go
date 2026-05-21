@@ -341,6 +341,10 @@ func Load() (*Config, error) {
 		cfg.AuthJWTTenantClaim = os.Getenv("GATEWAY_AUTH_JWT_TENANT_CLAIM")
 	}
 
+	if cfg.TenantEnforce && cfg.AuthMode == "anonymous" {
+		return nil, fmt.Errorf("GATEWAY_TENANT_ENFORCE=true is incompatible with GATEWAY_AUTH_MODE=anonymous (anonymous mode has no tenant source)")
+	}
+
 	return cfg, nil
 }
 
