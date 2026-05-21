@@ -191,6 +191,83 @@ func TestForwardingHandler_TargetWithBasePath(t *testing.T) {
 	}
 }
 
+func TestForwardingHandler_SessionForkEndpoints(t *testing.T) {
+	// POST /v1/sessions/{id}/fork and GET /v1/sessions/{id}/forks are
+	// conversation fork endpoints. They don't have dedicated route
+	// registrations — they're handled by the /v1/sessions/ catch-all
+	// in cmd/server/main.go. This test proves the ForwardingHandler
+	// forwards them with path, method, body, and auth headers intact.
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "POST fork",
+			method: "POST",
+			path:   "/v1/sessions/sess-123/fork",
+			body:   `{"title":"what-if branch"}`,
+		},
+		{
+			name:   "GET forks",
+			method: "GET",
+			path:   "/v1/sessions/sess-123/forks",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream, rec := newRecordingUpstream(t, 200, `{"ok":true}`)
+			h, err := handler.NewForwardingHandler(upstream.URL)
+			if err != nil {
+				t.Fatalf("NewForwardingHandler: %v", err)
+			}
+
+			var reqBody io.Reader
+			if tc.body != "" {
+				reqBody = strings.NewReader(tc.body)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, reqBody)
+			req.Header.Set("X-Auth-Subject", "u-456")
+			req.Header.Set("X-Auth-User", "alice")
+			req.Header.Set("X-Auth-Email", "alice@example.com")
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			if w.Code != 200 {
+				t.Errorf("status = %d, want 200", w.Code)
+			}
+			if rec.Method != tc.method {
+				t.Errorf("upstream method = %q, want %q", rec.Method, tc.method)
+			}
+			if rec.Path != tc.path {
+				t.Errorf("upstream path = %q, want %q", rec.Path, tc.path)
+			}
+			if tc.body != "" && string(rec.Body) != tc.body {
+				t.Errorf("upstream body = %q, want %q", string(rec.Body), tc.body)
+			}
+
+			// Auth headers must arrive at the backend.
+			wantHeaders := map[string]string{
+				"X-Auth-Subject": "u-456",
+				"X-Auth-User":    "alice",
+				"X-Auth-Email":   "alice@example.com",
+			}
+			for k, v := range wantHeaders {
+				if got := rec.Headers.Get(k); got != v {
+					t.Errorf("upstream header %s = %q, want %q", k, got, v)
+				}
+			}
+		})
+	}
+}
+
 func TestNewForwardingHandler_RejectsBadURL(t *testing.T) {
 	if _, err := handler.NewForwardingHandler("://bad-url"); err == nil {
 		t.Error("expected error on malformed URL, got nil")
