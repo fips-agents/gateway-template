@@ -109,6 +109,18 @@ type Config struct {
 
 	RateLimitRPS   int
 	RateLimitBurst int
+
+	// Backends maps named backends to URLs, populated from BACKEND_<name>
+	// env vars and/or a YAML routing config. Does not include BACKEND_URL.
+	Backends map[string]string
+
+	// Routes maps model patterns to backend names from the YAML routing
+	// config. Used by the chat handler to resolve model -> backend.
+	Routes map[string]string
+
+	// RoutingConfigFile is the optional YAML routing config file path,
+	// set via GATEWAY_ROUTING_CONFIG.
+	RoutingConfigFile string
 }
 
 // MIMEAllowed reports whether contentType matches the FilesAllowedMIME
@@ -245,6 +257,28 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("GATEWAY_RATE_LIMIT_BURST (%d) must be >= GATEWAY_RATE_LIMIT_RPS (%d)",
 			cfg.RateLimitBurst, cfg.RateLimitRPS)
 	}
+
+	// Multi-backend routing: scan env vars and optionally load YAML config.
+	cfg.RoutingConfigFile = os.Getenv("GATEWAY_ROUTING_CONFIG")
+	backends := scanBackendEnvVars()
+	var routes map[string]string
+
+	if cfg.RoutingConfigFile != "" {
+		rc, err := loadRoutingConfig(cfg.RoutingConfigFile)
+		if err != nil {
+			return nil, fmt.Errorf("GATEWAY_ROUTING_CONFIG: %w", err)
+		}
+		// YAML provides the base; env vars override same-named backends.
+		for name, url := range rc.Backends {
+			if _, exists := backends[name]; !exists {
+				backends[name] = url
+			}
+		}
+		routes = rc.Routes
+	}
+
+	cfg.Backends = backends
+	cfg.Routes = routes
 
 	if cfg.BackendURL == "" {
 		return nil, fmt.Errorf("BACKEND_URL environment variable is required")
