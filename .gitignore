@@ -1,4 +1,5 @@
 bin/
+server
 *.exe
 .DS_Store
 NEXT_SESSION.md
