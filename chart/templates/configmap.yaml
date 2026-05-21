@@ -8,6 +8,10 @@ data:
   {{- range $key, $val := .Values.config }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
+  {{- if .Values.tracing.enabled }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ required "tracing.endpoint is required when tracing.enabled=true" .Values.tracing.endpoint | quote }}
+  OTEL_SERVICE_NAME: {{ include "gateway-template.fullname" . | quote }}
+  {{- end }}
   GATEWAY_AUTH_MODE: {{ .Values.auth.mode | quote }}
   GATEWAY_AUTH_PROXY_USER_HEADER: {{ .Values.auth.proxy.userHeader | quote }}
   GATEWAY_AUTH_PROXY_EMAIL_HEADER: {{ .Values.auth.proxy.emailHeader | quote }}

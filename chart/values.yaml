@@ -110,6 +110,18 @@ auth:
       # means no scope narrowing.
       scope: ""
 
+# -- Distributed tracing (gateway-template#17) --------------------------------
+# When enabled, the gateway creates a child span per request using
+# OpenTelemetry and exports traces via OTLP HTTP. The span captures
+# method, path, request ID, tenant, and user identity. The updated
+# trace context is injected into forwarded headers so the backend sees
+# the gateway as a hop in the distributed trace.
+tracing:
+  enabled: false
+  # OTLP HTTP endpoint. Only consulted when enabled=true.
+  # Example: http://otel-collector.observability.svc:4318
+  endpoint: ""
+
 # -- Tenant identity (gateway-template#18) ------------------------------------
 # Controls tenant enforcement and per-tenant rate limiting. Tenant ID is
 # extracted from JWT claims (auth.jwt.tenantClaim) or proxy headers

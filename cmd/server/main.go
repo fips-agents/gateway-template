@@ -15,6 +15,7 @@ import (
 	"github.com/fips-agents/gateway-template/internal/handler"
 	"github.com/fips-agents/gateway-template/internal/middleware"
 	"github.com/fips-agents/gateway-template/internal/routing"
+	"github.com/fips-agents/gateway-template/internal/tracing"
 )
 
 func main() {
@@ -25,6 +26,13 @@ func main() {
 		slog.Error("configuration error", "error", err)
 		os.Exit(1)
 	}
+
+	tracingShutdown, err := tracing.Init(context.Background(), cfg.AgentName, cfg.AgentVersion)
+	if err != nil {
+		slog.Error("tracing configuration error", "error", err)
+		os.Exit(1)
+	}
+	defer tracingShutdown(context.Background())
 
 	router, err := routing.New(cfg.BackendURL, cfg.Backends, cfg.Routes)
 	if err != nil {
@@ -186,11 +194,13 @@ func main() {
 	mux.Handle("GET /v1/agent-info", agentInfoForward)
 
 	// Middleware stack (outside-in):
-	//   IP rate limit → Auth (strip + resolve + enforce tenant) → Tenant rate limit → Log → Mux
+	//   IP rate limit → Auth → Tenant rate limit → Tracing → Request-ID → Log → Mux
 	var rootHandler http.Handler = mux
 	if cfg.LogRequests {
 		rootHandler = middleware.LogRequests(rootHandler)
 	}
+	rootHandler = middleware.RequestID(rootHandler)
+	rootHandler = tracing.Middleware(rootHandler)
 	if cfg.TenantRateLimitEnabled() {
 		rootHandler = middleware.NewTenantRateLimiter(cfg.TenantRateLimitRPS, cfg.TenantRateLimitBurst)(rootHandler)
 	}
