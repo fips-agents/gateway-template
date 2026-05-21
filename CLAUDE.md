@@ -53,7 +53,7 @@ Key packages:
 - `cmd/server/` -- entry point, wiring, graceful shutdown
 - `internal/config/` -- environment variable parsing
 - `internal/handler/` -- HTTP handlers for each route
-- `internal/middleware/` -- request logging (structured, skips health probes)
+- `internal/middleware/` -- request logging (structured, skips health probes) and per-IP rate limiting (token bucket, `golang.org/x/time/rate`)
 - `internal/auth/` -- inbound auth strategies (`anonymous`, `proxy`, `jwt`) + middleware that strips spoofed `X-Auth-*` headers and projects canonical identity onto the request. `jwt` mode validates `Authorization: Bearer <token>` against a configured JWKS endpoint (cached by `kid`), enforces `iss`/`aud`/`exp`/`nbf`, and maps invalid tokens → 401 vs. JWKS-cold-cache failures → 503. Optional RFC 8693 token exchange (`exchange.go`) swaps the inbound user JWT for a downstream-audienced token before the handler runs; `Identity.BearerToken` carries the swapped value, the middleware projects it as `Authorization: Bearer <token>` on the request (or strips Authorization entirely when no swap is configured), and handlers forward it to the backend
 - `internal/proxy/` -- SSE relay logic
 
@@ -88,6 +88,8 @@ Key packages:
 | `GATEWAY_FILES_MAX_BYTES` | No | `26214400` (25 MiB) | Cap on multipart upload size. Accepts plain integers or values suffixed with `k`/`m`/`g` (binary). Requests over this size are rejected with 413 before the body is read; chunked clients are interrupted by `http.MaxBytesReader`. |
 | `GATEWAY_FILES_ALLOWED_MIME` | No | -- | Comma-separated MIME allowlist for the file part of `/v1/files` uploads. Entries may be exact (`application/pdf`) or wildcard (`image/*`). Empty defers entirely to the agent's own allowlist. |
 | `GATEWAY_FILES_UPLOAD_TIMEOUT` | No | `5m` | Per-request timeout for backend `POST /v1/files` calls. Larger than the chat-completion timeout so big uploads on slow links don't trip the gateway-side deadline before the agent finishes parsing. |
+| `GATEWAY_RATE_LIMIT_RPS` | No | `0` (disabled) | Sustained request rate (requests/second) per client IP. Both RPS and BURST must be set to enable rate limiting. Returns 429 with `Retry-After` when exceeded. |
+| `GATEWAY_RATE_LIMIT_BURST` | No | `0` (disabled) | Token bucket capacity per client IP. Must be >= RPS. |
 
 ## File upload proxy
 

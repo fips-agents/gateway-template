@@ -106,6 +106,9 @@ type Config struct {
 	// chat completions) so large uploads on slow links don't trip the
 	// gateway-side deadline before the agent finishes parsing.
 	FilesUploadTimeout time.Duration
+
+	RateLimitRPS   int
+	RateLimitBurst int
 }
 
 // MIMEAllowed reports whether contentType matches the FilesAllowedMIME
@@ -176,6 +179,10 @@ func (c *Config) JWTExchangeEnabled() bool {
 		c.AuthJWTExchangeAudience != ""
 }
 
+func (c *Config) RateLimitEnabled() bool {
+	return c.RateLimitRPS > 0 && c.RateLimitBurst > 0
+}
+
 // Load reads configuration from environment variables and validates required fields.
 func Load() (*Config, error) {
 	cfg := &Config{
@@ -220,6 +227,24 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.FilesUploadTimeout = timeout
+
+	rps, err := envIntDefault("GATEWAY_RATE_LIMIT_RPS", 0)
+	if err != nil {
+		return nil, err
+	}
+	burst, err := envIntDefault("GATEWAY_RATE_LIMIT_BURST", 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RateLimitRPS = rps
+	cfg.RateLimitBurst = burst
+	if cfg.RateLimitRPS == 0 && cfg.RateLimitBurst > 0 {
+		return nil, fmt.Errorf("GATEWAY_RATE_LIMIT_BURST (%d) set but GATEWAY_RATE_LIMIT_RPS is 0", cfg.RateLimitBurst)
+	}
+	if cfg.RateLimitRPS > 0 && cfg.RateLimitBurst < cfg.RateLimitRPS {
+		return nil, fmt.Errorf("GATEWAY_RATE_LIMIT_BURST (%d) must be >= GATEWAY_RATE_LIMIT_RPS (%d)",
+			cfg.RateLimitBurst, cfg.RateLimitRPS)
+	}
 
 	if cfg.BackendURL == "" {
 		return nil, fmt.Errorf("BACKEND_URL environment variable is required")
@@ -383,4 +408,19 @@ func parseMIMEList(raw string) []string {
 		}
 	}
 	return out
+}
+
+func envIntDefault(key string, fallback int) (int, error) {
+	raw, ok := os.LookupEnv(key)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s must be non-negative, got %d", key, n)
+	}
+	return n, nil
 }

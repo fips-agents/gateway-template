@@ -154,6 +154,9 @@ func main() {
 		rootHandler = middleware.LogRequests(rootHandler)
 	}
 	rootHandler = auth.Middleware(authenticator)(rootHandler)
+	if cfg.RateLimitEnabled() {
+		rootHandler = middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)(rootHandler)
+	}
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
@@ -181,6 +184,8 @@ func main() {
 			"files_upload_timeout", cfg.FilesUploadTimeout,
 			"files_allowed_mime_count", len(cfg.FilesAllowedMIME),
 			"jwt_jwks_refresh_rate_limit", cfg.AuthJWTJWKSRefreshRateLimit,
+			"rate_limit_rps", cfg.RateLimitRPS,
+			"rate_limit_burst", cfg.RateLimitBurst,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
