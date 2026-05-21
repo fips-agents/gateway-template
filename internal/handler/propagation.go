@@ -13,6 +13,7 @@ import "net/http"
 var propagationHeaders = []string{
 	"Traceparent",
 	"Tracestate",
+	"X-Request-ID",
 }
 
 // copyPropagationHeaders copies the W3C Trace Context headers from src to

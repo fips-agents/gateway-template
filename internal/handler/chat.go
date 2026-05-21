@@ -58,6 +58,7 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // avoid leaking internal headers.
 var passThroughHeaders = []string{
 	"X-Trace-Id",
+	"X-Request-ID",
 }
 
 // copyPassThroughHeaders copies the allowlisted headers from src to dst.
