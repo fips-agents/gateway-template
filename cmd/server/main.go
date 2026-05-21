@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"github.com/fips-agents/gateway-template/internal/config"
 	"github.com/fips-agents/gateway-template/internal/handler"
 	"github.com/fips-agents/gateway-template/internal/middleware"
+	"github.com/fips-agents/gateway-template/internal/routing"
 )
 
 func main() {
@@ -23,6 +23,12 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("configuration error", "error", err)
+		os.Exit(1)
+	}
+
+	router, err := routing.New(cfg.BackendURL, cfg.Backends, cfg.Routes)
+	if err != nil {
+		slog.Error("routing configuration error", "error", err)
 		os.Exit(1)
 	}
 
@@ -66,18 +72,25 @@ func main() {
 	mux.Handle("/v1/chat/completions", &handler.ChatHandler{
 		BackendURL: cfg.BackendURL,
 		Client:     client,
+		Router:     router,
 	})
 	feedbackTarget := cfg.FeedbackTargetURL()
-	feedbackHandler := &handler.FeedbackHandler{BackendURL: feedbackTarget, Client: client}
+	var feedbackRouter *routing.Router
+	if feedbackTarget == cfg.BackendURL {
+		feedbackRouter = router
+	}
+	feedbackHandler := &handler.FeedbackHandler{BackendURL: feedbackTarget, Client: client, Router: feedbackRouter}
 	mux.Handle("POST /v1/feedback", feedbackHandler)
 	mux.Handle("GET /v1/feedback", feedbackHandler)
 	mux.Handle("GET /v1/feedback/stats", &handler.FeedbackStatsHandler{
 		BackendURL: feedbackTarget,
 		Client:     client,
+		Router:     feedbackRouter,
 	})
 	mux.Handle("PATCH /v1/feedback/{feedback_id}", &handler.FeedbackByIdHandler{
 		BackendURL: feedbackTarget,
 		Client:     client,
+		Router:     feedbackRouter,
 	})
 
 	// /v1/sessions/* and /v1/traces/* are platform-routable. When
@@ -86,17 +99,34 @@ func main() {
 	// fipsagents-platform).  GET /v1/sessions/{id}/usage is carved out
 	// to always go to the agent because /usage layers PricingConfig
 	// over cost_data — it's an agent capability, not a platform one.
-	sessionsForward, err := handler.NewForwardingHandler(cfg.SessionsTargetURL())
+	var sessionsForward *handler.ForwardingHandler
+	sessionsTarget := cfg.SessionsTargetURL()
+	if sessionsTarget == cfg.BackendURL && router.HasBackends() {
+		sessionsForward, err = handler.NewRoutingForwardingHandler(cfg.BackendURL, handler.XBackendResolver(router))
+	} else {
+		sessionsForward, err = handler.NewForwardingHandler(sessionsTarget)
+	}
 	if err != nil {
 		slog.Error("sessions forward configuration error", "error", err)
 		os.Exit(1)
 	}
-	tracesForward, err := handler.NewForwardingHandler(cfg.TracesTargetURL())
+	var tracesForward *handler.ForwardingHandler
+	tracesTarget := cfg.TracesTargetURL()
+	if tracesTarget == cfg.BackendURL && router.HasBackends() {
+		tracesForward, err = handler.NewRoutingForwardingHandler(cfg.BackendURL, handler.XBackendResolver(router))
+	} else {
+		tracesForward, err = handler.NewForwardingHandler(tracesTarget)
+	}
 	if err != nil {
 		slog.Error("traces forward configuration error", "error", err)
 		os.Exit(1)
 	}
-	usageForward, err := handler.NewForwardingHandler(cfg.BackendURL)
+	var usageForward *handler.ForwardingHandler
+	if router.HasBackends() {
+		usageForward, err = handler.NewRoutingForwardingHandler(cfg.BackendURL, handler.XBackendResolver(router))
+	} else {
+		usageForward, err = handler.NewForwardingHandler(cfg.BackendURL)
+	}
 	if err != nil {
 		slog.Error("usage forward configuration error", "error", err)
 		os.Exit(1)
@@ -112,7 +142,12 @@ func main() {
 	// allowlist before forwarding; metadata operations don't need
 	// special handling. Files are always agent-routed (no platform
 	// equivalent today; see agent-template#100).
-	filesForward, err := handler.NewForwardingHandler(cfg.BackendURL)
+	var filesForward *handler.ForwardingHandler
+	if router.HasBackends() {
+		filesForward, err = handler.NewRoutingForwardingHandler(cfg.BackendURL, handler.XBackendResolver(router))
+	} else {
+		filesForward, err = handler.NewForwardingHandler(cfg.BackendURL)
+	}
 	if err != nil {
 		slog.Error("files forward configuration error", "error", err)
 		os.Exit(1)
@@ -123,6 +158,7 @@ func main() {
 		Cfg:        cfg,
 		Timeout:    cfg.FilesUploadTimeout,
 		Client:     &http.Client{},
+		Router:     router,
 	})
 	mux.Handle("GET /v1/files", filesForward)
 	mux.Handle("/v1/files/", filesForward)
@@ -135,17 +171,17 @@ func main() {
 		AgentName:    cfg.AgentName,
 		AgentVersion: cfg.AgentVersion,
 	})
-	mux.HandleFunc("GET /v1/agent-info", func(w http.ResponseWriter, r *http.Request) {
-		resp, err := client.Get(cfg.BackendURL + "/v1/agent-info")
-		if err != nil {
-			http.Error(w, "backend unreachable", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
-	})
+	var agentInfoForward *handler.ForwardingHandler
+	if router.HasBackends() {
+		agentInfoForward, err = handler.NewRoutingForwardingHandler(cfg.BackendURL, handler.XBackendResolver(router))
+	} else {
+		agentInfoForward, err = handler.NewForwardingHandler(cfg.BackendURL)
+	}
+	if err != nil {
+		slog.Error("agent-info forward configuration error", "error", err)
+		os.Exit(1)
+	}
+	mux.Handle("GET /v1/agent-info", agentInfoForward)
 
 	// Auth runs first so logs (and any later middleware) see the resolved
 	// canonical X-Auth-* headers and never see spoofed inbound copies.
@@ -186,6 +222,8 @@ func main() {
 			"jwt_jwks_refresh_rate_limit", cfg.AuthJWTJWKSRefreshRateLimit,
 			"rate_limit_rps", cfg.RateLimitRPS,
 			"rate_limit_burst", cfg.RateLimitBurst,
+			"routing_backends", len(cfg.Backends),
+			"routing_rules", len(cfg.Routes),
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
