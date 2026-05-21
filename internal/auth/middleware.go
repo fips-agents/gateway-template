@@ -6,6 +6,15 @@ import (
 	"net/http"
 )
 
+// MiddlewareConfig tunes the auth middleware behavior. Zero value is
+// backward-compatible with the original Middleware() call.
+type MiddlewareConfig struct {
+	// TenantEnforce rejects requests where the resolved Identity has an
+	// empty TenantID with 403. When false (default), missing tenant is
+	// logged at Info and the request proceeds (observe mode).
+	TenantEnforce bool
+}
+
 // unauthenticatedPaths are exempt from auth resolution. Kubelet liveness
 // and readiness probes hit the gateway directly (not through the upstream
 // OAuth proxy) and have no identity, so in proxy mode they would otherwise
@@ -31,6 +40,12 @@ var unauthenticatedPaths = map[string]struct{}{
 // they cannot be used as a spoof channel into downstream handlers — but
 // since those handlers don't call any backend, this is defence in depth.
 func Middleware(a Authenticator) func(http.Handler) http.Handler {
+	return MiddlewareWithConfig(a, MiddlewareConfig{})
+}
+
+// MiddlewareWithConfig returns an HTTP middleware with explicit config tuning.
+// See MiddlewareConfig for available options.
+func MiddlewareWithConfig(a Authenticator, mcfg MiddlewareConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			stripCanonicalHeaders(r.Header)
@@ -60,6 +75,17 @@ func Middleware(a Authenticator) func(http.Handler) http.Handler {
 					"method", r.Method,
 				)
 				http.Error(w, `{"error":"upstream identity unavailable"}`, http.StatusServiceUnavailable)
+				return
+			}
+
+			if mcfg.TenantEnforce && id.TenantID == "" {
+				slog.Info("auth: rejecting request with missing tenant",
+					"subject", id.Subject,
+					"mode", id.Mode,
+					"path", r.URL.Path,
+					"method", r.Method,
+				)
+				http.Error(w, `{"error":"tenant identity required"}`, http.StatusForbidden)
 				return
 			}
 
@@ -99,4 +125,5 @@ func setCanonicalHeaders(h http.Header, id Identity) {
 	h.Set(HeaderUser, id.User)
 	h.Set(HeaderEmail, id.Email)
 	h.Set(HeaderMode, id.Mode)
+	h.Set(HeaderTenantID, id.TenantID)
 }
