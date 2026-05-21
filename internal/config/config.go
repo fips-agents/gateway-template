@@ -68,6 +68,19 @@ type Config struct {
 	AuthJWTExchangeAudience     string
 	AuthJWTExchangeScope        string
 
+	// Tenant identity: configurable extraction from JWT claims or proxy headers.
+	AuthJWTTenantClaim    string
+	AuthProxyTenantHeader string
+
+	// TenantEnforce controls whether missing tenant identity is rejected (true)
+	// or observed (false, default). Applies across all auth modes.
+	TenantEnforce bool
+
+	// Per-tenant rate limiting, keyed by X-Tenant-ID. Independent of per-IP
+	// rate limiting — both are enforced when configured.
+	TenantRateLimitRPS   int
+	TenantRateLimitBurst int
+
 	// PlatformURL is the base URL of a deployed fipsagents-platform
 	// service. When set, /v1/feedback*, /v1/sessions/*, and /v1/traces/*
 	// route to it instead of fanning out to the per-agent BackendURL.
@@ -195,6 +208,10 @@ func (c *Config) RateLimitEnabled() bool {
 	return c.RateLimitRPS > 0 && c.RateLimitBurst > 0
 }
 
+func (c *Config) TenantRateLimitEnabled() bool {
+	return c.TenantRateLimitRPS > 0 && c.TenantRateLimitBurst > 0
+}
+
 // Load reads configuration from environment variables and validates required fields.
 func Load() (*Config, error) {
 	cfg := &Config{
@@ -218,6 +235,8 @@ func Load() (*Config, error) {
 		AuthJWTExchangeAudience:     os.Getenv("GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_AUDIENCE"),
 		AuthJWTExchangeScope:        os.Getenv("GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_SCOPE"),
 		AuthJWTJWKSRefreshRateLimit: 0, // resolved below; 0 ⇒ keyfunc default
+		AuthProxyTenantHeader:       os.Getenv("GATEWAY_AUTH_PROXY_TENANT_HEADER"),
+		TenantEnforce:               envBool("GATEWAY_TENANT_ENFORCE"),
 
 		PlatformURL: strings.TrimRight(os.Getenv("GATEWAY_PLATFORM_URL"), "/"),
 		// Per-prefix toggles default to true so that setting PLATFORM_URL
@@ -256,6 +275,24 @@ func Load() (*Config, error) {
 	if cfg.RateLimitRPS > 0 && cfg.RateLimitBurst < cfg.RateLimitRPS {
 		return nil, fmt.Errorf("GATEWAY_RATE_LIMIT_BURST (%d) must be >= GATEWAY_RATE_LIMIT_RPS (%d)",
 			cfg.RateLimitBurst, cfg.RateLimitRPS)
+	}
+
+	tenantRPS, err := envIntDefault("GATEWAY_TENANT_RATE_LIMIT_RPS", 0)
+	if err != nil {
+		return nil, err
+	}
+	tenantBurst, err := envIntDefault("GATEWAY_TENANT_RATE_LIMIT_BURST", 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg.TenantRateLimitRPS = tenantRPS
+	cfg.TenantRateLimitBurst = tenantBurst
+	if cfg.TenantRateLimitRPS == 0 && cfg.TenantRateLimitBurst > 0 {
+		return nil, fmt.Errorf("GATEWAY_TENANT_RATE_LIMIT_BURST (%d) set but GATEWAY_TENANT_RATE_LIMIT_RPS is 0", cfg.TenantRateLimitBurst)
+	}
+	if cfg.TenantRateLimitRPS > 0 && cfg.TenantRateLimitBurst < cfg.TenantRateLimitRPS {
+		return nil, fmt.Errorf("GATEWAY_TENANT_RATE_LIMIT_BURST (%d) must be >= GATEWAY_TENANT_RATE_LIMIT_RPS (%d)",
+			cfg.TenantRateLimitBurst, cfg.TenantRateLimitRPS)
 	}
 
 	// Multi-backend routing: scan env vars and optionally load YAML config.
@@ -301,6 +338,7 @@ func Load() (*Config, error) {
 			return nil, err
 		}
 		cfg.AuthJWTJWKSRefreshRateLimit = d
+		cfg.AuthJWTTenantClaim = os.Getenv("GATEWAY_AUTH_JWT_TENANT_CLAIM")
 	}
 
 	return cfg, nil
