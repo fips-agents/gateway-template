@@ -26,6 +26,10 @@ func LogRequests(next http.Handler) http.Handler {
 			"status", sw.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"bytes", sw.bytes,
+			"request_id", r.Header.Get("X-Request-ID"),
+			"tenant_id", r.Header.Get("X-Tenant-ID"),
+			"subject", r.Header.Get("X-Auth-Subject"),
+			"auth_mode", r.Header.Get("X-Auth-Mode"),
 		)
 	})
 }
