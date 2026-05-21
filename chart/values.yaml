@@ -110,6 +110,21 @@ auth:
       # means no scope narrowing.
       scope: ""
 
+# -- Per-tenant budget enforcement (gateway-template#15) ----------------------
+# Track and enforce per-tenant token budgets. Usage is accumulated in-memory
+# from chat response data (best-effort, resets on restart). The agent's
+# GET /v1/sessions/{id}/usage endpoint remains authoritative for historical cost.
+budget:
+  # Default per-tenant token budget. 0 = unlimited (no enforcement).
+  defaultTokens: 0
+  # Path to a YAML budget config file (must be mounted separately) with
+  # per-tenant overrides. Format:
+  #   default: 1000000
+  #   tenants:
+  #     acme: 5000000
+  #     beta: 500000
+  configFile: ""
+
 # -- Distributed tracing (gateway-template#17) --------------------------------
 # When enabled, the gateway creates a child span per request using
 # OpenTelemetry and exports traces via OTLP HTTP. The span captures

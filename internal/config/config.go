@@ -81,6 +81,14 @@ type Config struct {
 	TenantRateLimitRPS   int
 	TenantRateLimitBurst int
 
+	// BudgetDefaultTokens is the default per-tenant token budget. 0 means
+	// unlimited (no enforcement). Applied when no per-tenant override exists
+	// in the budget config file.
+	BudgetDefaultTokens int64
+	// BudgetConfigFile is the optional YAML file with per-tenant budget
+	// overrides, set via GATEWAY_BUDGET_CONFIG.
+	BudgetConfigFile string
+
 	// PlatformURL is the base URL of a deployed fipsagents-platform
 	// service. When set, /v1/feedback*, /v1/sessions/*, and /v1/traces/*
 	// route to it instead of fanning out to the per-agent BackendURL.
@@ -295,6 +303,13 @@ func Load() (*Config, error) {
 			cfg.TenantRateLimitBurst, cfg.TenantRateLimitRPS)
 	}
 
+	budgetTokens, err := envInt64Default("GATEWAY_BUDGET_DEFAULT_TOKENS", 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg.BudgetDefaultTokens = budgetTokens
+	cfg.BudgetConfigFile = os.Getenv("GATEWAY_BUDGET_CONFIG")
+
 	// Multi-backend routing: scan env vars and optionally load YAML config.
 	cfg.RoutingConfigFile = os.Getenv("GATEWAY_ROUTING_CONFIG")
 	backends := scanBackendEnvVars()
@@ -492,6 +507,21 @@ func envIntDefault(key string, fallback int) (int, error) {
 		return fallback, nil
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s must be non-negative, got %d", key, n)
+	}
+	return n, nil
+}
+
+func envInt64Default(key string, fallback int64) (int64, error) {
+	raw, ok := os.LookupEnv(key)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}

@@ -8,6 +8,12 @@ data:
   {{- range $key, $val := .Values.config }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
+  {{- if and .Values.budget .Values.budget.defaultTokens }}
+  GATEWAY_BUDGET_DEFAULT_TOKENS: {{ .Values.budget.defaultTokens | quote }}
+  {{- end }}
+  {{- with .Values.budget.configFile }}
+  GATEWAY_BUDGET_CONFIG: {{ . | quote }}
+  {{- end }}
   {{- if .Values.tracing.enabled }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ required "tracing.endpoint is required when tracing.enabled=true" .Values.tracing.endpoint | quote }}
   OTEL_SERVICE_NAME: {{ include "gateway-template.fullname" . | quote }}

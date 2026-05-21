@@ -47,7 +47,7 @@ Client --> Gateway (:8080) --> Backend Agent
              +-- /.well-known/agent.json (GET, agent card)
 
 Middleware stack (outside-in):
-  IP Rate Limit → Auth (strip + resolve + enforce tenant) → Tenant Rate Limit → Tracing → Request-ID → Log → Mux
+  IP Rate Limit → Auth → Tenant Rate Limit → Budget Enforce → Tracing → Request-ID → Log → Mux
 ```
 
 **Platform routing mode (gateway-template#30, chart 0.5.0).** When `GATEWAY_PLATFORM_URL` is set, the three persistence prefixes (`/v1/feedback*`, `/v1/sessions/*`, `/v1/traces/*`) proxy to a deployed [`fipsagents-platform`](https://github.com/fips-agents/fipsagents-platform) service instead of fanning out to per-agent backends. Per-prefix toggles (`GATEWAY_PLATFORM_ROUTE_{FEEDBACK,SESSIONS,TRACES}`) default to `true` when `PLATFORM_URL` is set; flip individual ones to `false` to keep that prefix on the agent. `GET /v1/sessions/{id}/usage` is always agent-routed because it computes USD cost from the agent's `PricingConfig` and is not a platform endpoint. The forwarding handler (`internal/handler/forward.go`, `httputil.ReverseProxy`-based) preserves method, body, query string, `Authorization`, `X-Auth-*`, `X-Tenant`, and `traceparent` headers verbatim — it does not parse request bodies.
@@ -59,6 +59,7 @@ Key packages:
 - `internal/config/` -- environment variable parsing
 - `internal/handler/` -- HTTP handlers for each route
 - `internal/middleware/` -- request logging (structured, skips health probes), per-IP and per-tenant rate limiting (token bucket, `golang.org/x/time/rate`), X-Request-ID generation
+- `internal/budget/` -- per-tenant token budget tracking and enforcement. Accumulates usage from chat response `usage` fields in-memory (best-effort, resets on restart). Pre-request middleware rejects over-budget tenants with 402. Sync responses get `X-Token-Usage` / `X-Budget-Remaining` headers.
 - `internal/tracing/` -- optional OpenTelemetry instrumentation. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, creates a child span per request and injects updated trace context into forwarded headers. No-op when unset.
 - `internal/auth/` -- inbound auth strategies (`anonymous`, `proxy`, `jwt`) + middleware that strips spoofed `X-Auth-*` headers and projects canonical identity onto the request. `jwt` mode validates `Authorization: Bearer <token>` against a configured JWKS endpoint (cached by `kid`), enforces `iss`/`aud`/`exp`/`nbf`, and maps invalid tokens → 401 vs. JWKS-cold-cache failures → 503. Optional RFC 8693 token exchange (`exchange.go`) swaps the inbound user JWT for a downstream-audienced token before the handler runs; `Identity.BearerToken` carries the swapped value, the middleware projects it as `Authorization: Bearer <token>` on the request (or strips Authorization entirely when no swap is configured), and handlers forward it to the backend
 - `internal/proxy/` -- SSE relay logic
@@ -101,6 +102,8 @@ Key packages:
 | `GATEWAY_FILES_UPLOAD_TIMEOUT` | No | `5m` | Per-request timeout for backend `POST /v1/files` calls. Larger than the chat-completion timeout so big uploads on slow links don't trip the gateway-side deadline before the agent finishes parsing. |
 | `GATEWAY_RATE_LIMIT_RPS` | No | `0` (disabled) | Sustained request rate (requests/second) per client IP. Both RPS and BURST must be set to enable rate limiting. Returns 429 with `Retry-After` when exceeded. |
 | `GATEWAY_RATE_LIMIT_BURST` | No | `0` (disabled) | Token bucket capacity per client IP. Must be >= RPS. |
+| `GATEWAY_BUDGET_DEFAULT_TOKENS` | No | `0` (unlimited) | Default per-tenant token budget. 0 = no enforcement. |
+| `GATEWAY_BUDGET_CONFIG` | No | -- | Path to YAML file with per-tenant budget overrides. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | -- | Standard OTel var. When set, the gateway creates child spans per request and exports via OTLP HTTP. When empty, tracing is no-op. |
 | `OTEL_SERVICE_NAME` | No | `gateway-template` | Standard OTel var. Service name in traces. Falls back to `AGENT_NAME`. |
 | `BACKEND_<name>` | No | -- | Additional backend URLs for multi-backend routing. Name (case-insensitive) is used as the backend identifier. |

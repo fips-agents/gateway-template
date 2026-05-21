@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fips-agents/gateway-template/internal/auth"
+	"github.com/fips-agents/gateway-template/internal/budget"
 	"github.com/fips-agents/gateway-template/internal/config"
 	"github.com/fips-agents/gateway-template/internal/handler"
 	"github.com/fips-agents/gateway-template/internal/middleware"
@@ -76,13 +77,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	budgetStore := budget.NewStore()
+	var budgetConfig *budget.Config
+	if cfg.BudgetConfigFile != "" {
+		budgetConfig, err = budget.LoadConfig(cfg.BudgetConfigFile)
+		if err != nil {
+			slog.Error("budget configuration error", "error", err)
+			os.Exit(1)
+		}
+	} else if cfg.BudgetDefaultTokens > 0 {
+		budgetConfig = &budget.Config{Default: cfg.BudgetDefaultTokens}
+	}
+
 	client := &http.Client{Timeout: 120 * time.Second}
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/chat/completions", &handler.ChatHandler{
-		BackendURL: cfg.BackendURL,
-		Client:     client,
-		Router:     router,
+		BackendURL:   cfg.BackendURL,
+		Client:       client,
+		Router:       router,
+		Budget:       budgetStore,
+		BudgetConfig: budgetConfig,
 	})
 	feedbackTarget := cfg.FeedbackTargetURL()
 	var feedbackRouter *routing.Router
@@ -194,7 +209,7 @@ func main() {
 	mux.Handle("GET /v1/agent-info", agentInfoForward)
 
 	// Middleware stack (outside-in):
-	//   IP rate limit → Auth → Tenant rate limit → Tracing → Request-ID → Log → Mux
+	//   IP RL → Auth → Tenant RL → Budget Enforce → Tracing → Request-ID → Log → Mux
 	var rootHandler http.Handler = mux
 	if cfg.LogRequests {
 		rootHandler = middleware.LogRequests(rootHandler)
@@ -202,6 +217,9 @@ func main() {
 	rootHandler = middleware.RequestID(rootHandler)
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
 		rootHandler = tracing.Middleware(rootHandler)
+	}
+	if budgetConfig != nil {
+		rootHandler = budget.EnforceMiddleware(budgetStore, budgetConfig)(rootHandler)
 	}
 	if cfg.TenantRateLimitEnabled() {
 		rootHandler = middleware.NewTenantRateLimiter(cfg.TenantRateLimitRPS, cfg.TenantRateLimitBurst)(rootHandler)
@@ -244,6 +262,8 @@ func main() {
 			"rate_limit_burst", cfg.RateLimitBurst,
 			"tenant_rate_limit_rps", cfg.TenantRateLimitRPS,
 			"tenant_rate_limit_burst", cfg.TenantRateLimitBurst,
+			"budget_default_tokens", cfg.BudgetDefaultTokens,
+			"budget_config", cfg.BudgetConfigFile,
 			"routing_backends", len(cfg.Backends),
 			"routing_rules", len(cfg.Routes),
 		)
