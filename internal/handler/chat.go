@@ -6,7 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 
+	"github.com/fips-agents/gateway-template/internal/budget"
 	"github.com/fips-agents/gateway-template/internal/proxy"
 	"github.com/fips-agents/gateway-template/internal/routing"
 )
@@ -14,9 +16,11 @@ import (
 // ChatHandler proxies OpenAI-compatible /v1/chat/completions requests to a
 // backend agent service. It supports both synchronous and streaming modes.
 type ChatHandler struct {
-	BackendURL string
-	Client     *http.Client
-	Router     *routing.Router // nil = single-backend mode
+	BackendURL   string
+	Client       *http.Client
+	Router       *routing.Router // nil = single-backend mode
+	Budget       *budget.Store   // nil = no usage tracking
+	BudgetConfig *budget.Config  // nil = no budget limits
 }
 
 // ServeHTTP dispatches the request to either streaming or synchronous proxy
@@ -70,6 +74,14 @@ func copyPassThroughHeaders(dst http.Header, src http.Header) {
 	}
 }
 
+// usageEnvelope is the minimal structure needed to extract token usage from
+// sync chat completion responses.
+type usageEnvelope struct {
+	Usage *struct {
+		TotalTokens int64 `json:"total_tokens"`
+	} `json:"usage"`
+}
+
 // proxySync forwards the request and returns the full backend response.
 func (h *ChatHandler) proxySync(w http.ResponseWriter, r *http.Request, body []byte, model string) {
 	resp, err := h.doBackendRequest(r, body, model)
@@ -80,12 +92,49 @@ func (h *ChatHandler) proxySync(w http.ResponseWriter, r *http.Request, body []b
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		slog.Warn("error reading backend response", "error", err)
+		http.Error(w, `{"error":"failed to read backend response"}`, http.StatusBadGateway)
+		return
+	}
+
+	var tokens int64
+	if resp.StatusCode == http.StatusOK {
+		var env usageEnvelope
+		if json.Unmarshal(respBody, &env) == nil && env.Usage != nil {
+			tokens = env.Usage.TotalTokens
+		}
+	}
+
+	if tokens > 0 && h.Budget != nil {
+		tenant := r.Header.Get("X-Tenant-ID")
+		if tenant != "" {
+			h.Budget.Add(tenant, tokens)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	copyPassThroughHeaders(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		slog.Warn("error copying backend response", "error", err)
+	if tokens > 0 {
+		w.Header().Set("X-Token-Usage", strconv.FormatInt(tokens, 10))
+		if h.Budget != nil && h.BudgetConfig != nil {
+			tenant := r.Header.Get("X-Tenant-ID")
+			remaining := int64(-1)
+			if tenant != "" {
+				limit := h.BudgetConfig.BudgetFor(tenant)
+				if limit > 0 {
+					remaining = limit - h.Budget.Usage(tenant)
+					if remaining < 0 {
+						remaining = 0
+					}
+				}
+			}
+			w.Header().Set("X-Budget-Remaining", strconv.FormatInt(remaining, 10))
+		}
 	}
+	w.WriteHeader(resp.StatusCode)
+	w.Write(respBody)
 }
 
 // proxyStreaming connects to the backend with streaming enabled and relays
@@ -113,7 +162,16 @@ func (h *ChatHandler) proxyStreaming(w http.ResponseWriter, r *http.Request, bod
 	w.Header().Set("X-Accel-Buffering", "no")
 	copyPassThroughHeaders(w.Header(), resp.Header)
 
-	proxy.RelaySSE(resp, w)
+	var relayOpts []proxy.RelayOption
+	if h.Budget != nil {
+		tenant := r.Header.Get("X-Tenant-ID")
+		if tenant != "" {
+			relayOpts = append(relayOpts, proxy.WithUsageCallback(func(totalTokens int64) {
+				h.Budget.Add(tenant, totalTokens)
+			}))
+		}
+	}
+	proxy.RelaySSE(resp, w, relayOpts...)
 }
 
 // forwardedAuthHeaders are the auth-related headers projected by the auth
@@ -129,6 +187,7 @@ var forwardedAuthHeaders = []string{
 	"X-Auth-User",
 	"X-Auth-Email",
 	"X-Auth-Mode",
+	"X-Tenant-ID",
 	"Authorization",
 }
 
