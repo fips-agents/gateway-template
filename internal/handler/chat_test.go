@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fips-agents/gateway-template/internal/handler"
+	"github.com/fips-agents/gateway-template/internal/routing"
 )
 
 // sampleCompletion is a minimal OpenAI-compatible chat completion response.
@@ -502,5 +503,199 @@ func TestChatHandler_StreamingBackendError(t *testing.T) {
 	ct := rec.Header().Get("Content-Type")
 	if ct != "application/json" {
 		t.Errorf("streaming backend error: want Content-Type application/json, got %q", ct)
+	}
+}
+
+func TestChatHandler_RoutesToBackendByModel(t *testing.T) {
+	var backendACalled, fallbackCalled bool
+
+	backendA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendACalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"from-backend-a"}`))
+	}))
+	defer backendA.Close()
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"from-fallback"}`))
+	}))
+	defer fallback.Close()
+
+	router, err := routing.New(fallback.URL, map[string]string{
+		"backend-a": backendA.URL,
+	}, map[string]string{
+		"agent-a": "backend-a",
+	})
+	if err != nil {
+		t.Fatalf("routing.New: %v", err)
+	}
+
+	h := &handler.ChatHandler{
+		BackendURL: fallback.URL,
+		Client:     &http.Client{},
+		Router:     router,
+	}
+
+	// Request with model "agent-a" should hit backend A.
+	reqBody := `{"model":"agent-a","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if !backendACalled {
+		t.Fatal("expected backend A to receive the request for model \"agent-a\"")
+	}
+	if fallbackCalled {
+		t.Fatal("fallback should not have been called for model \"agent-a\"")
+	}
+
+	// Reset flags.
+	backendACalled = false
+	fallbackCalled = false
+
+	// Request with unknown model should hit fallback.
+	reqBody = `{"model":"unknown","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if backendACalled {
+		t.Fatal("backend A should not have been called for model \"unknown\"")
+	}
+	if !fallbackCalled {
+		t.Fatal("expected fallback to receive the request for model \"unknown\"")
+	}
+}
+
+func TestChatHandler_ModelWildcardRouting(t *testing.T) {
+	var backendBCalled, fallbackCalled bool
+
+	backendB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendBCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"from-backend-b"}`))
+	}))
+	defer backendB.Close()
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"from-fallback"}`))
+	}))
+	defer fallback.Close()
+
+	router, err := routing.New(fallback.URL, map[string]string{
+		"backend-b": backendB.URL,
+	}, map[string]string{
+		"claude-*": "backend-b",
+	})
+	if err != nil {
+		t.Fatalf("routing.New: %v", err)
+	}
+
+	h := &handler.ChatHandler{
+		BackendURL: fallback.URL,
+		Client:     &http.Client{},
+		Router:     router,
+	}
+
+	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if !backendBCalled {
+		t.Fatal("expected backend B to receive the request for model \"claude-3-opus\" (wildcard claude-*)")
+	}
+	if fallbackCalled {
+		t.Fatal("fallback should not have been called for model \"claude-3-opus\"")
+	}
+}
+
+func TestChatHandler_NoModelField_FallsBack(t *testing.T) {
+	var fallbackCalled bool
+
+	backendA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("routed backend should not be called when model field is absent")
+	}))
+	defer backendA.Close()
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"from-fallback"}`))
+	}))
+	defer fallback.Close()
+
+	router, err := routing.New(fallback.URL, map[string]string{
+		"backend-a": backendA.URL,
+	}, map[string]string{
+		"agent-a": "backend-a",
+	})
+	if err != nil {
+		t.Fatalf("routing.New: %v", err)
+	}
+
+	h := &handler.ChatHandler{
+		BackendURL: fallback.URL,
+		Client:     &http.Client{},
+		Router:     router,
+	}
+
+	// Body has no "model" field at all.
+	reqBody := `{"messages":[],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if !fallbackCalled {
+		t.Fatal("expected fallback to receive the request when model field is absent")
+	}
+}
+
+func TestChatHandler_NilRouter_UsesBackendURL(t *testing.T) {
+	var backendCalled bool
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"from-backend"}`))
+	}))
+	defer backend.Close()
+
+	h := &handler.ChatHandler{
+		BackendURL: backend.URL,
+		Client:     backend.Client(),
+		Router:     nil, // explicitly nil -- single-backend mode
+	}
+
+	reqBody := `{"model":"anything","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if !backendCalled {
+		t.Fatal("expected BackendURL to receive the request when Router is nil")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("nil router: want status %d, got %d", http.StatusOK, rec.Code)
 	}
 }

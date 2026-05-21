@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/fips-agents/gateway-template/internal/proxy"
+	"github.com/fips-agents/gateway-template/internal/routing"
 )
 
 // ChatHandler proxies OpenAI-compatible /v1/chat/completions requests to a
@@ -15,6 +16,7 @@ import (
 type ChatHandler struct {
 	BackendURL string
 	Client     *http.Client
+	Router     *routing.Router // nil = single-backend mode
 }
 
 // ServeHTTP dispatches the request to either streaming or synchronous proxy
@@ -33,9 +35,10 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Peek at the "stream" field to decide the proxy mode.
+	// Peek at "stream" and "model" to decide proxy mode and backend routing.
 	var envelope struct {
-		Stream bool `json:"stream"`
+		Stream bool   `json:"stream"`
+		Model  string `json:"model"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		slog.Warn("failed to parse request JSON", "error", err)
@@ -44,9 +47,9 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if envelope.Stream {
-		h.proxyStreaming(w, r, body)
+		h.proxyStreaming(w, r, body, envelope.Model)
 	} else {
-		h.proxySync(w, r, body)
+		h.proxySync(w, r, body, envelope.Model)
 	}
 }
 
@@ -67,8 +70,8 @@ func copyPassThroughHeaders(dst http.Header, src http.Header) {
 }
 
 // proxySync forwards the request and returns the full backend response.
-func (h *ChatHandler) proxySync(w http.ResponseWriter, r *http.Request, body []byte) {
-	resp, err := h.doBackendRequest(r, body)
+func (h *ChatHandler) proxySync(w http.ResponseWriter, r *http.Request, body []byte, model string) {
+	resp, err := h.doBackendRequest(r, body, model)
 	if err != nil {
 		slog.Error("backend request failed", "error", err)
 		http.Error(w, `{"error":"backend request failed"}`, http.StatusBadGateway)
@@ -86,8 +89,8 @@ func (h *ChatHandler) proxySync(w http.ResponseWriter, r *http.Request, body []b
 
 // proxyStreaming connects to the backend with streaming enabled and relays
 // SSE chunks to the client.
-func (h *ChatHandler) proxyStreaming(w http.ResponseWriter, r *http.Request, body []byte) {
-	resp, err := h.doBackendRequest(r, body)
+func (h *ChatHandler) proxyStreaming(w http.ResponseWriter, r *http.Request, body []byte, model string) {
+	resp, err := h.doBackendRequest(r, body, model)
 	if err != nil {
 		slog.Error("backend streaming request failed", "error", err)
 		http.Error(w, `{"error":"backend request failed"}`, http.StatusBadGateway)
@@ -131,8 +134,14 @@ var forwardedAuthHeaders = []string{
 // doBackendRequest sends the request body to the backend's chat completions
 // endpoint, forwarding the canonical X-Auth-* headers from the inbound
 // request so the agent can attribute the call to the resolved identity.
-func (h *ChatHandler) doBackendRequest(r *http.Request, body []byte) (*http.Response, error) {
-	url := h.BackendURL + "/v1/chat/completions"
+// When a Router is configured, model selects the target backend; otherwise
+// h.BackendURL is used directly (single-backend mode).
+func (h *ChatHandler) doBackendRequest(r *http.Request, body []byte, model string) (*http.Response, error) {
+	backendURL := h.BackendURL
+	if h.Router != nil {
+		backendURL = h.Router.ResolveModel(model)
+	}
+	url := backendURL + "/v1/chat/completions"
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
