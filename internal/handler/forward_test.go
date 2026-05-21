@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fips-agents/gateway-template/internal/handler"
+	"github.com/fips-agents/gateway-template/internal/routing"
 )
 
 // recordedRequest captures everything ForwardingHandler-wired tests
@@ -271,5 +272,127 @@ func TestForwardingHandler_SessionForkEndpoints(t *testing.T) {
 func TestNewForwardingHandler_RejectsBadURL(t *testing.T) {
 	if _, err := handler.NewForwardingHandler("://bad-url"); err == nil {
 		t.Error("expected error on malformed URL, got nil")
+	}
+}
+
+func TestRoutingForwardingHandler_ResolvesXBackend(t *testing.T) {
+	// Two mock backends -- only backend-a should receive the request.
+	backendA, recA := newRecordingUpstream(t, 200, `{"from":"a"}`)
+	backendB, _ := newRecordingUpstream(t, 200, `{"from":"b"}`)
+
+	router, err := routing.New(backendB.URL, map[string]string{
+		"backend-a": backendA.URL,
+		"backend-b": backendB.URL,
+	}, nil)
+	if err != nil {
+		t.Fatalf("routing.New: %v", err)
+	}
+
+	h, err := handler.NewRoutingForwardingHandler(backendB.URL, handler.XBackendResolver(router))
+	if err != nil {
+		t.Fatalf("NewRoutingForwardingHandler: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/v1/sessions/s-1", nil)
+	req.Header.Set("X-Backend", "backend-a")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if w.Body.String() != `{"from":"a"}` {
+		t.Errorf("body = %q, want response from backend-a", w.Body.String())
+	}
+	if recA.Path != "/v1/sessions/s-1" {
+		t.Errorf("upstream path = %q, want /v1/sessions/s-1", recA.Path)
+	}
+	// X-Backend must not leak to the backend.
+	if got := recA.Headers.Get("X-Backend"); got != "" {
+		t.Errorf("X-Backend leaked to backend: %q", got)
+	}
+}
+
+func TestRoutingForwardingHandler_MissingXBackend_FallsBack(t *testing.T) {
+	fallback, recFallback := newRecordingUpstream(t, 200, `{"from":"fallback"}`)
+	other, _ := newRecordingUpstream(t, 200, `{"from":"other"}`)
+
+	router, err := routing.New(fallback.URL, map[string]string{
+		"other": other.URL,
+	}, nil)
+	if err != nil {
+		t.Fatalf("routing.New: %v", err)
+	}
+
+	h, err := handler.NewRoutingForwardingHandler(fallback.URL, handler.XBackendResolver(router))
+	if err != nil {
+		t.Fatalf("NewRoutingForwardingHandler: %v", err)
+	}
+
+	// No X-Backend header -- should go to fallback.
+	req := httptest.NewRequest("GET", "/v1/traces/tr-1", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if w.Body.String() != `{"from":"fallback"}` {
+		t.Errorf("body = %q, want response from fallback", w.Body.String())
+	}
+	if recFallback.Path != "/v1/traces/tr-1" {
+		t.Errorf("upstream path = %q, want /v1/traces/tr-1", recFallback.Path)
+	}
+}
+
+func TestRoutingForwardingHandler_UnknownXBackend_FallsBack(t *testing.T) {
+	fallback, recFallback := newRecordingUpstream(t, 200, `{"from":"fallback"}`)
+
+	router, err := routing.New(fallback.URL, map[string]string{
+		"known": fallback.URL,
+	}, nil)
+	if err != nil {
+		t.Fatalf("routing.New: %v", err)
+	}
+
+	h, err := handler.NewRoutingForwardingHandler(fallback.URL, handler.XBackendResolver(router))
+	if err != nil {
+		t.Fatalf("NewRoutingForwardingHandler: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/v1/sessions/s-2", nil)
+	req.Header.Set("X-Backend", "does-not-exist")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if w.Body.String() != `{"from":"fallback"}` {
+		t.Errorf("body = %q, want response from fallback", w.Body.String())
+	}
+	if recFallback.Path != "/v1/sessions/s-2" {
+		t.Errorf("upstream path = %q, want /v1/sessions/s-2", recFallback.Path)
+	}
+}
+
+func TestForwardingHandler_StripsXBackendHeader(t *testing.T) {
+	// Even with the fixed-URL constructor, X-Backend must be stripped.
+	upstream, rec := newRecordingUpstream(t, 200, `{"ok":true}`)
+	h, err := handler.NewForwardingHandler(upstream.URL)
+	if err != nil {
+		t.Fatalf("NewForwardingHandler: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/v1/sessions/s-1", nil)
+	req.Header.Set("X-Backend", "should-be-stripped")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if got := rec.Headers.Get("X-Backend"); got != "" {
+		t.Errorf("X-Backend leaked to upstream via fixed handler: %q", got)
 	}
 }

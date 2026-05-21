@@ -6,6 +6,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+
+	"github.com/fips-agents/gateway-template/internal/routing"
 )
 
 // ForwardingHandler is a thin reverse-proxy handler that forwards every
@@ -65,6 +67,7 @@ func NewForwardingHandler(targetURL string) (*ForwardingHandler, error) {
 			// Drop any inbound Host header echo so the upstream
 			// sees the platform host.
 			pr.Out.Header.Del("Host")
+			pr.Out.Header.Del("X-Backend") // strip gateway-internal routing header
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			logger := h.Logger
@@ -85,6 +88,57 @@ func NewForwardingHandler(targetURL string) (*ForwardingHandler, error) {
 
 func (h *ForwardingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.proxy.ServeHTTP(w, r)
+}
+
+// NewRoutingForwardingHandler creates a ForwardingHandler that resolves
+// the target URL per-request using the provided resolver function. The
+// fallbackURL is used when the resolver returns an unparseable URL.
+func NewRoutingForwardingHandler(fallbackURL string, resolver func(r *http.Request) string) (*ForwardingHandler, error) {
+	fallback, err := url.Parse(strings.TrimRight(fallbackURL, "/"))
+	if err != nil {
+		return nil, err
+	}
+	h := &ForwardingHandler{TargetURL: fallback.String()}
+	h.proxy = &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			targetURL := resolver(pr.In)
+			target, err := url.Parse(strings.TrimRight(targetURL, "/"))
+			if err != nil {
+				// Fall back to the fallback URL on parse error
+				target = fallback
+			}
+			pr.Out.URL.Scheme = target.Scheme
+			pr.Out.URL.Host = target.Host
+			pr.Out.URL.Path = singleJoiningSlash(target.Path, pr.In.URL.Path)
+			pr.Out.URL.RawPath = ""
+			pr.Out.Host = target.Host
+			pr.Out.Header = pr.In.Header.Clone()
+			pr.Out.Header.Del("Host")
+			pr.Out.Header.Del("X-Backend") // strip gateway-internal routing header
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			logger := h.Logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.Error("platform proxy failed",
+				"error", err,
+				"target", fallback.String(),
+				"path", r.URL.Path,
+				"method", r.Method,
+			)
+			http.Error(w, `{"error":"platform unreachable"}`, http.StatusBadGateway)
+		},
+	}
+	return h, nil
+}
+
+// XBackendResolver returns a resolver function that reads X-Backend
+// from the request and resolves it via the Router.
+func XBackendResolver(router *routing.Router) func(r *http.Request) string {
+	return func(r *http.Request) string {
+		return router.ResolveByName(r.Header.Get("X-Backend"))
+	}
 }
 
 // singleJoiningSlash concatenates two URL path components ensuring

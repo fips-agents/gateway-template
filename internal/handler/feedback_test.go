@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fips-agents/gateway-template/internal/handler"
+	"github.com/fips-agents/gateway-template/internal/routing"
 )
 
 func TestFeedbackHandler_PostProxy(t *testing.T) {
@@ -300,5 +301,80 @@ func TestFeedbackStatsHandler_MethodNotAllowed(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("method not allowed: want status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+}
+
+func TestFeedbackHandler_XBackendRouting(t *testing.T) {
+	var capturedPath string
+	backendA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"from":"a"}`))
+	}))
+	defer backendA.Close()
+
+	backendB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("backendB should not be reached")
+	}))
+	defer backendB.Close()
+
+	router, err := routing.New(backendB.URL, map[string]string{
+		"backend-a": backendA.URL,
+		"backend-b": backendB.URL,
+	}, nil)
+	if err != nil {
+		t.Fatalf("routing.New: %v", err)
+	}
+
+	h := &handler.FeedbackHandler{
+		BackendURL: backendB.URL,
+		Client:     &http.Client{},
+		Router:     router,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/feedback",
+		strings.NewReader(`{"rating":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Backend", "backend-a")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	if capturedPath != "/v1/feedback" {
+		t.Errorf("upstream path = %q, want /v1/feedback", capturedPath)
+	}
+}
+
+func TestFeedbackHandler_NilRouter_UsesBackendURL(t *testing.T) {
+	var capturedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"feedback_id":"fb_1"}]`))
+	}))
+	defer backend.Close()
+
+	// Router is nil -- must fall back to BackendURL.
+	h := &handler.FeedbackHandler{
+		BackendURL: backend.URL,
+		Client:     backend.Client(),
+		Router:     nil,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/feedback?limit=5", nil)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if capturedPath != "/v1/feedback" {
+		t.Errorf("upstream path = %q, want /v1/feedback", capturedPath)
 	}
 }

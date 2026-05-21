@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+
+	"github.com/fips-agents/gateway-template/internal/routing"
 )
 
 // authHeaders are the auth-related headers forwarded to the backend so it
@@ -34,14 +36,19 @@ var authHeaders = []string{
 type FeedbackHandler struct {
 	BackendURL string
 	Client     *http.Client
+	Router     *routing.Router
 }
 
 // ServeHTTP dispatches POST and GET to the backend, returning 405 for any
 // other method.
 func (h *FeedbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	backendURL := h.BackendURL
+	if h.Router != nil {
+		backendURL = h.Router.ResolveByName(r.Header.Get("X-Backend"))
+	}
 	switch r.Method {
 	case http.MethodPost, http.MethodGet:
-		proxyPassthrough(w, r, h.Client, h.BackendURL+"/v1/feedback")
+		proxyPassthrough(w, r, h.Client, backendURL+"/v1/feedback")
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
@@ -54,6 +61,7 @@ func (h *FeedbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type FeedbackByIdHandler struct {
 	BackendURL string
 	Client     *http.Client
+	Router     *routing.Router
 }
 
 func (h *FeedbackByIdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -66,13 +74,18 @@ func (h *FeedbackByIdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"feedback_id required"}`, http.StatusBadRequest)
 		return
 	}
-	proxyPassthrough(w, r, h.Client, h.BackendURL+"/v1/feedback/"+id)
+	backendURL := h.BackendURL
+	if h.Router != nil {
+		backendURL = h.Router.ResolveByName(r.Header.Get("X-Backend"))
+	}
+	proxyPassthrough(w, r, h.Client, backendURL+"/v1/feedback/"+id)
 }
 
 // FeedbackStatsHandler proxies GET /v1/feedback/stats to the backend.
 type FeedbackStatsHandler struct {
 	BackendURL string
 	Client     *http.Client
+	Router     *routing.Router
 }
 
 func (h *FeedbackStatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +93,11 @@ func (h *FeedbackStatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
-	proxyPassthrough(w, r, h.Client, h.BackendURL+"/v1/feedback/stats")
+	backendURL := h.BackendURL
+	if h.Router != nil {
+		backendURL = h.Router.ResolveByName(r.Header.Get("X-Backend"))
+	}
+	proxyPassthrough(w, r, h.Client, backendURL+"/v1/feedback/stats")
 }
 
 // proxyPassthrough forwards a request to backendURL, preserving method,

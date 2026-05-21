@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fips-agents/gateway-template/internal/config"
+	"github.com/fips-agents/gateway-template/internal/routing"
 )
 
 // FilesUploadHandler proxies POST /v1/files multipart uploads to the
@@ -43,6 +44,7 @@ type FilesUploadHandler struct {
 	// caller owns the timeout via Timeout — Client.Timeout is ignored
 	// so it can be shared with other handlers.
 	Client *http.Client
+	Router *routing.Router
 }
 
 // ServeHTTP enforces method, size, and MIME constraints, then streams
@@ -129,7 +131,12 @@ func (h *FilesUploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 
-	upstream, err := http.NewRequestWithContext(ctx, http.MethodPost, h.BackendURL+"/v1/files", pr)
+	backendURL := h.BackendURL
+	if h.Router != nil {
+		backendURL = h.Router.ResolveByName(r.Header.Get("X-Backend"))
+	}
+
+	upstream, err := http.NewRequestWithContext(ctx, http.MethodPost, backendURL+"/v1/files", pr)
 	if err != nil {
 		slog.Error("failed to build upstream request", "error", err)
 		http.Error(w, `{"error":"failed to build backend request"}`, http.StatusInternalServerError)
