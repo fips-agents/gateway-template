@@ -45,6 +45,9 @@ Client --> Gateway (:8080) --> Backend Agent
              +-- /healthz              (GET, liveness)
              +-- /readyz               (GET, checks backend)
              +-- /.well-known/agent.json (GET, agent card)
+
+Middleware stack (outside-in):
+  IP Rate Limit → Auth (strip + resolve + enforce tenant) → Tenant Rate Limit → Log → Mux
 ```
 
 **Platform routing mode (gateway-template#30, chart 0.5.0).** When `GATEWAY_PLATFORM_URL` is set, the three persistence prefixes (`/v1/feedback*`, `/v1/sessions/*`, `/v1/traces/*`) proxy to a deployed [`fipsagents-platform`](https://github.com/fips-agents/fipsagents-platform) service instead of fanning out to per-agent backends. Per-prefix toggles (`GATEWAY_PLATFORM_ROUTE_{FEEDBACK,SESSIONS,TRACES}`) default to `true` when `PLATFORM_URL` is set; flip individual ones to `false` to keep that prefix on the agent. `GET /v1/sessions/{id}/usage` is always agent-routed because it computes USD cost from the agent's `PricingConfig` and is not a platform endpoint. The forwarding handler (`internal/handler/forward.go`, `httputil.ReverseProxy`-based) preserves method, body, query string, `Authorization`, `X-Auth-*`, `X-Tenant`, and `traceparent` headers verbatim — it does not parse request bodies.
@@ -83,6 +86,11 @@ Key packages:
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_CLIENT_SECRET` | exchange | -- | (`jwt` mode) gateway service-account client secret |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_AUDIENCE` | exchange | -- | (`jwt` mode) downstream audience the swapped token targets |
 | `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_SCOPE` | No | -- | (`jwt` mode) optional space-separated scope set requested on the swap |
+| `GATEWAY_AUTH_JWT_TENANT_CLAIM` | No | -- | (`jwt` mode) claim name to extract as tenant ID, projected onto `X-Tenant-ID`. Empty = no tenant extraction. |
+| `GATEWAY_AUTH_PROXY_TENANT_HEADER` | No | -- | (`proxy` mode) upstream header carrying tenant ID. Empty = no tenant in proxy mode. |
+| `GATEWAY_TENANT_ENFORCE` | No | `false` | When `true`, reject requests with missing tenant ID (403). When `false`, log and forward (observe mode). |
+| `GATEWAY_TENANT_RATE_LIMIT_RPS` | No | `0` (disabled) | Per-tenant sustained request rate. Both RPS and BURST must be set to enable. Independent of per-IP rate limiting. |
+| `GATEWAY_TENANT_RATE_LIMIT_BURST` | No | `0` (disabled) | Per-tenant token bucket capacity. Must be >= RPS. |
 | `GATEWAY_PLATFORM_URL` | No | -- | Base URL of a deployed `fipsagents-platform` service. When set, persistence prefixes proxy here; trailing slash trimmed. |
 | `GATEWAY_PLATFORM_ROUTE_FEEDBACK` | No | `true` (when `PLATFORM_URL` set) | Route `/v1/feedback*` to platform. Set `false` to keep on agent. No-op when `PLATFORM_URL` unset. |
 | `GATEWAY_PLATFORM_ROUTE_SESSIONS` | No | `true` (when `PLATFORM_URL` set) | Route `/v1/sessions/*` to platform (except `/usage`, always agent). Set `false` to keep on agent. |
@@ -108,7 +116,7 @@ The body itself is never buffered: the handler reads the inbound multipart, re-e
 
 ## Auth contract
 
-The gateway emits canonical `X-Auth-Subject` / `X-Auth-User` / `X-Auth-Email` / `X-Auth-Mode` headers to the backend on every `/v1/*` request. Inbound copies are stripped before the strategy runs so clients cannot spoof identity. Header names match Kagenti's AuthBridge JWT claim shape, so an AuthBridge token and a fipsagents-issued token resolve onto the same canonical contract. `proxy` mode fails closed with 503 when the upstream user header is missing. `jwt` mode validates `Authorization: Bearer <token>` against a JWKS endpoint, returning 401 on bad/expired/wrong-issuer/wrong-audience tokens and 503 only when the JWKS endpoint is unreachable AND the cache is cold.
+The gateway emits canonical `X-Auth-Subject` / `X-Auth-User` / `X-Auth-Email` / `X-Auth-Mode` / `X-Tenant-ID` headers to the backend on every `/v1/*` request. Inbound copies are stripped before the strategy runs so clients cannot spoof identity. `X-Tenant-ID` is extracted from a configurable JWT claim (`GATEWAY_AUTH_JWT_TENANT_CLAIM`) or proxy header (`GATEWAY_AUTH_PROXY_TENANT_HEADER`); when unconfigured it is empty. When `GATEWAY_TENANT_ENFORCE=true`, requests with an empty tenant are rejected with 403. Header names match Kagenti's AuthBridge JWT claim shape, so an AuthBridge token and a fipsagents-issued token resolve onto the same canonical contract. `proxy` mode fails closed with 503 when the upstream user header is missing. `jwt` mode validates `Authorization: Bearer <token>` against a JWKS endpoint, returning 401 on bad/expired/wrong-issuer/wrong-audience tokens and 503 only when the JWKS endpoint is unreachable AND the cache is cold.
 
 `Authorization` itself is part of the contract: by default the middleware strips inbound Authorization before the handler runs (so the gateway never forwards a raw user JWT). When the four `GATEWAY_AUTH_JWT_TOKEN_EXCHANGE_*` env vars are set together, the gateway performs an RFC 8693 swap of the inbound token (subject_token) for a downstream-audienced token (the `audience` form parameter), caches it for `min(expires_in − 30s, 5min)` keyed by `sha256(inbound-token)`, and forwards it as `Authorization: Bearer <swapped>` to the backend. Exchange failures fail closed with 503. Partial token-exchange config (some required vars set, others not) is rejected at startup so a typo cannot silently disable the swap.
 

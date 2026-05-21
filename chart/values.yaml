@@ -49,6 +49,9 @@ auth:
   proxy:
     userHeader: X-Forwarded-User
     emailHeader: X-Forwarded-Email
+    # Header carrying tenant identity from the upstream proxy. Empty means
+    # no tenant extraction in proxy mode.
+    tenantHeader: ""
   jwt:
     # JWKS endpoint to fetch signing keys from. Required when mode=jwt.
     # Example: https://keycloak.example/realms/myrealm/protocol/openid-connect/certs
@@ -64,6 +67,10 @@ auth:
     userClaim: preferred_username
     # Claim name to project onto X-Auth-Email. Default: email.
     emailClaim: email
+    # Claim name to extract as tenant identifier, projected onto X-Tenant-ID.
+    # Empty (default) means no tenant extraction. Common values: "org_id",
+    # "tenant", "organization".
+    tenantClaim: ""
     # Cap how often the JWKS client refreshes the key set in response to
     # an unknown `kid`. Empty / unset keeps keyfunc's library default of
     # 1 refresh per 5 minutes — already conservative enough for most
@@ -102,6 +109,22 @@ auth:
       # Optional space-separated scope set requested on the swap. Empty
       # means no scope narrowing.
       scope: ""
+
+# -- Tenant identity (gateway-template#18) ------------------------------------
+# Controls tenant enforcement and per-tenant rate limiting. Tenant ID is
+# extracted from JWT claims (auth.jwt.tenantClaim) or proxy headers
+# (auth.proxy.tenantHeader) and projected as X-Tenant-ID to the backend.
+tenant:
+  # When true, requests without a resolved tenant ID are rejected with 403.
+  # When false (default), missing tenant is logged but the request proceeds.
+  # Start with false (observe mode) and flip to true after verifying all
+  # tokens carry the expected tenant claim.
+  enforce: false
+  rateLimit:
+    # Per-tenant sustained request rate. 0 = disabled. Both rps and burst
+    # must be set to enable. Independent of per-IP rate limiting.
+    rps: 0
+    burst: 0
 
 # -- Platform service routing (gateway-template#30) --------------------------
 # When `platform.url` is set, /v1/feedback*, /v1/sessions/*, and /v1/traces/*

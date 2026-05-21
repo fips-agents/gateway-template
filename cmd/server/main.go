@@ -48,8 +48,9 @@ func main() {
 	}
 
 	authenticator, err := auth.New(cfg.AuthMode, auth.Options{
-		ProxyUserHeader:  cfg.AuthProxyUserHeader,
-		ProxyEmailHeader: cfg.AuthProxyEmailHeader,
+		ProxyUserHeader:   cfg.AuthProxyUserHeader,
+		ProxyEmailHeader:  cfg.AuthProxyEmailHeader,
+		ProxyTenantHeader: cfg.AuthProxyTenantHeader,
 		JWT: auth.JWTConfig{
 			JWKSURL:              cfg.AuthJWTJWKSURL,
 			Issuer:               cfg.AuthJWTIssuer,
@@ -57,6 +58,7 @@ func main() {
 			SubjectClaim:         cfg.AuthJWTSubjectClaim,
 			UserClaim:            cfg.AuthJWTUserClaim,
 			EmailClaim:           cfg.AuthJWTEmailClaim,
+			TenantClaim:          cfg.AuthJWTTenantClaim,
 			JWKSRefreshRateLimit: cfg.AuthJWTJWKSRefreshRateLimit,
 		},
 		JWTExchanger: exchanger,
@@ -183,13 +185,18 @@ func main() {
 	}
 	mux.Handle("GET /v1/agent-info", agentInfoForward)
 
-	// Auth runs first so logs (and any later middleware) see the resolved
-	// canonical X-Auth-* headers and never see spoofed inbound copies.
+	// Middleware stack (outside-in):
+	//   IP rate limit → Auth (strip + resolve + enforce tenant) → Tenant rate limit → Log → Mux
 	var rootHandler http.Handler = mux
 	if cfg.LogRequests {
 		rootHandler = middleware.LogRequests(rootHandler)
 	}
-	rootHandler = auth.Middleware(authenticator)(rootHandler)
+	if cfg.TenantRateLimitEnabled() {
+		rootHandler = middleware.NewTenantRateLimiter(cfg.TenantRateLimitRPS, cfg.TenantRateLimitBurst)(rootHandler)
+	}
+	rootHandler = auth.MiddlewareWithConfig(authenticator, auth.MiddlewareConfig{
+		TenantEnforce: cfg.TenantEnforce,
+	})(rootHandler)
 	if cfg.RateLimitEnabled() {
 		rootHandler = middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)(rootHandler)
 	}
@@ -216,12 +223,15 @@ func main() {
 			"version", cfg.AgentVersion,
 			"auth_mode", cfg.AuthMode,
 			"jwt_token_exchange", exchanger != nil,
+			"tenant_enforce", cfg.TenantEnforce,
 			"files_max_bytes", cfg.FilesMaxBytes,
 			"files_upload_timeout", cfg.FilesUploadTimeout,
 			"files_allowed_mime_count", len(cfg.FilesAllowedMIME),
 			"jwt_jwks_refresh_rate_limit", cfg.AuthJWTJWKSRefreshRateLimit,
 			"rate_limit_rps", cfg.RateLimitRPS,
 			"rate_limit_burst", cfg.RateLimitBurst,
+			"tenant_rate_limit_rps", cfg.TenantRateLimitRPS,
+			"tenant_rate_limit_burst", cfg.TenantRateLimitBurst,
 			"routing_backends", len(cfg.Backends),
 			"routing_rules", len(cfg.Routes),
 		)

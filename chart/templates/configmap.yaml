@@ -11,6 +11,14 @@ data:
   GATEWAY_AUTH_MODE: {{ .Values.auth.mode | quote }}
   GATEWAY_AUTH_PROXY_USER_HEADER: {{ .Values.auth.proxy.userHeader | quote }}
   GATEWAY_AUTH_PROXY_EMAIL_HEADER: {{ .Values.auth.proxy.emailHeader | quote }}
+  {{- with .Values.auth.proxy.tenantHeader }}
+  GATEWAY_AUTH_PROXY_TENANT_HEADER: {{ . | quote }}
+  {{- end }}
+  GATEWAY_TENANT_ENFORCE: {{ .Values.tenant.enforce | default false | quote }}
+  {{- if and .Values.tenant.rateLimit .Values.tenant.rateLimit.rps }}
+  GATEWAY_TENANT_RATE_LIMIT_RPS: {{ .Values.tenant.rateLimit.rps | quote }}
+  GATEWAY_TENANT_RATE_LIMIT_BURST: {{ .Values.tenant.rateLimit.burst | default .Values.tenant.rateLimit.rps | quote }}
+  {{- end }}
   {{- with .Values.platform }}
   {{- if .url }}
   GATEWAY_PLATFORM_URL: {{ .url | quote }}
@@ -43,6 +51,9 @@ data:
   GATEWAY_AUTH_JWT_SUBJECT_CLAIM: {{ .Values.auth.jwt.subjectClaim | default "sub" | quote }}
   GATEWAY_AUTH_JWT_USER_CLAIM: {{ .Values.auth.jwt.userClaim | default "preferred_username" | quote }}
   GATEWAY_AUTH_JWT_EMAIL_CLAIM: {{ .Values.auth.jwt.emailClaim | default "email" | quote }}
+  {{- with .Values.auth.jwt.tenantClaim }}
+  GATEWAY_AUTH_JWT_TENANT_CLAIM: {{ . | quote }}
+  {{- end }}
   {{- with .Values.auth.jwt.jwksRefreshRateLimit }}
   GATEWAY_AUTH_JWT_JWKS_REFRESH_RATE_LIMIT: {{ . | quote }}
   {{- end }}
