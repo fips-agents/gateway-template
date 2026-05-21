@@ -178,3 +178,40 @@ func TestStatusWriter_ImplementsFlusher(t *testing.T) {
 		t.Error("Flush should have been called on the underlying ResponseRecorder")
 	}
 }
+
+func TestLogRequests_AuditFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	slog.SetDefault(logger)
+	defer restoreDefaultLogger()
+
+	handler := middleware.LogRequests(dummyHandler)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	// Set audit headers on the request.
+	req.Header.Set("X-Request-ID", "req-12345")
+	req.Header.Set("X-Tenant-ID", "tenant-abc")
+	req.Header.Set("X-Auth-Subject", "user-789")
+	req.Header.Set("X-Auth-Mode", "jwt")
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	logOutput := buf.String()
+
+	// Verify all four audit fields appear in the log output.
+	// Note: X-Auth-Subject is logged as "subject", not "auth_subject".
+	expectedFields := []string{
+		`"request_id":"req-12345"`,
+		`"tenant_id":"tenant-abc"`,
+		`"subject":"user-789"`,
+		`"auth_mode":"jwt"`,
+	}
+
+	for _, want := range expectedFields {
+		if !strings.Contains(logOutput, want) {
+			t.Errorf("log output missing %s\ngot: %s", want, logOutput)
+		}
+	}
+}
