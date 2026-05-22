@@ -208,6 +208,50 @@ func main() {
 	}
 	mux.Handle("GET /v1/agent-info", agentInfoForward)
 
+	// Sidecar routes. Registered only when the corresponding sidecar URL
+	// is configured. Each sidecar gets an opaque forwarding proxy with
+	// optional size/timeout enforcement.
+	if cfg.SidecarVideoEnabled() {
+		videoForward, err := handler.NewForwardingHandler(cfg.SidecarVideoURL)
+		if err != nil {
+			slog.Error("video sidecar configuration error", "error", err)
+			os.Exit(1)
+		}
+		mux.Handle("POST /v1/video/preprocess", &handler.SidecarHandler{
+			Forward:  videoForward,
+			MaxBytes: cfg.SidecarVideoMaxBytes,
+			Timeout:  cfg.SidecarVideoTimeout,
+			PostOnly: true,
+		})
+		slog.Info("sidecar route registered", "path", "/v1/video/preprocess", "target", cfg.SidecarVideoURL)
+	}
+	if cfg.SidecarSTTEnabled() {
+		sttForward, err := handler.NewForwardingHandler(cfg.SidecarSTTURL)
+		if err != nil {
+			slog.Error("STT sidecar configuration error", "error", err)
+			os.Exit(1)
+		}
+		mux.Handle("POST /v1/audio/transcriptions", &handler.SidecarHandler{
+			Forward:  sttForward,
+			Timeout:  cfg.SidecarAudioTimeout,
+			PostOnly: true,
+		})
+		slog.Info("sidecar route registered", "path", "/v1/audio/transcriptions", "target", cfg.SidecarSTTURL)
+	}
+	if cfg.SidecarTTSEnabled() {
+		ttsForward, err := handler.NewForwardingHandler(cfg.SidecarTTSURL)
+		if err != nil {
+			slog.Error("TTS sidecar configuration error", "error", err)
+			os.Exit(1)
+		}
+		mux.Handle("POST /v1/audio/speech", &handler.SidecarHandler{
+			Forward:  ttsForward,
+			Timeout:  cfg.SidecarAudioTimeout,
+			PostOnly: true,
+		})
+		slog.Info("sidecar route registered", "path", "/v1/audio/speech", "target", cfg.SidecarTTSURL)
+	}
+
 	// Middleware stack (outside-in):
 	//   IP RL → Auth → Tenant RL → Budget Enforce → Tracing → Request-ID → Log → Mux
 	var rootHandler http.Handler = mux
