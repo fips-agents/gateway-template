@@ -19,6 +19,10 @@ const FilesMaxBytesDefault int64 = 25 * 1024 * 1024
 // to accommodate slow links uploading near the size cap.
 const FilesUploadTimeoutDefault = 5 * time.Minute
 
+const SidecarVideoMaxBytesDefault int64 = 500 * 1024 * 1024 // 500 MiB
+const SidecarVideoTimeoutDefault = 10 * time.Minute
+const SidecarAudioTimeoutDefault = 2 * time.Minute
+
 // Config holds the gateway configuration loaded from environment variables.
 type Config struct {
 	Port         string
@@ -88,6 +92,15 @@ type Config struct {
 	// BudgetConfigFile is the optional YAML file with per-tenant budget
 	// overrides, set via GATEWAY_BUDGET_CONFIG.
 	BudgetConfigFile string
+
+	// Sidecar service URLs. When set, the corresponding sidecar endpoints
+	// are registered. When empty, those routes are not available.
+	SidecarVideoURL      string
+	SidecarVideoTimeout  time.Duration
+	SidecarVideoMaxBytes int64
+	SidecarSTTURL        string
+	SidecarTTSURL        string
+	SidecarAudioTimeout  time.Duration
 
 	// PlatformURL is the base URL of a deployed fipsagents-platform
 	// service. When set, /v1/feedback*, /v1/sessions/*, and /v1/traces/*
@@ -220,6 +233,10 @@ func (c *Config) TenantRateLimitEnabled() bool {
 	return c.TenantRateLimitRPS > 0 && c.TenantRateLimitBurst > 0
 }
 
+func (c *Config) SidecarVideoEnabled() bool { return c.SidecarVideoURL != "" }
+func (c *Config) SidecarSTTEnabled() bool   { return c.SidecarSTTURL != "" }
+func (c *Config) SidecarTTSEnabled() bool   { return c.SidecarTTSURL != "" }
+
 // Load reads configuration from environment variables and validates required fields.
 func Load() (*Config, error) {
 	cfg := &Config{
@@ -309,6 +326,28 @@ func Load() (*Config, error) {
 	}
 	cfg.BudgetDefaultTokens = budgetTokens
 	cfg.BudgetConfigFile = os.Getenv("GATEWAY_BUDGET_CONFIG")
+
+	cfg.SidecarVideoURL = strings.TrimRight(os.Getenv("GATEWAY_SIDECAR_VIDEO_URL"), "/")
+	cfg.SidecarSTTURL = strings.TrimRight(os.Getenv("GATEWAY_SIDECAR_STT_URL"), "/")
+	cfg.SidecarTTSURL = strings.TrimRight(os.Getenv("GATEWAY_SIDECAR_TTS_URL"), "/")
+
+	videoTimeout, err := envDurationDefault("GATEWAY_SIDECAR_VIDEO_TIMEOUT", SidecarVideoTimeoutDefault)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SidecarVideoTimeout = videoTimeout
+
+	videoMaxBytes, err := envBytesDefault("GATEWAY_SIDECAR_VIDEO_MAX_BYTES", SidecarVideoMaxBytesDefault)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SidecarVideoMaxBytes = videoMaxBytes
+
+	audioTimeout, err := envDurationDefault("GATEWAY_SIDECAR_AUDIO_TIMEOUT", SidecarAudioTimeoutDefault)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SidecarAudioTimeout = audioTimeout
 
 	// Multi-backend routing: scan env vars and optionally load YAML config.
 	cfg.RoutingConfigFile = os.Getenv("GATEWAY_ROUTING_CONFIG")
