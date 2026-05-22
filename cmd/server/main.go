@@ -188,9 +188,20 @@ func main() {
 	mux.Handle("GET /v1/files", filesForward)
 	mux.Handle("/v1/files/", filesForward)
 	mux.Handle("/healthz", &handler.HealthHandler{})
+	sidecarHealthURLs := make(map[string]string)
+	if cfg.SidecarVideoEnabled() {
+		sidecarHealthURLs["video"] = cfg.SidecarVideoURL
+	}
+	if cfg.SidecarSTTEnabled() {
+		sidecarHealthURLs["stt"] = cfg.SidecarSTTURL
+	}
+	if cfg.SidecarTTSEnabled() {
+		sidecarHealthURLs["tts"] = cfg.SidecarTTSURL
+	}
 	mux.Handle("/readyz", &handler.ReadyHandler{
-		BackendURL: cfg.BackendURL,
-		Client:     &http.Client{Timeout: 3 * time.Second},
+		BackendURL:  cfg.BackendURL,
+		Client:      &http.Client{Timeout: 3 * time.Second},
+		SidecarURLs: sidecarHealthURLs,
 	})
 	mux.Handle("/.well-known/agent.json", &handler.WellKnownHandler{
 		AgentName:    cfg.AgentName,
