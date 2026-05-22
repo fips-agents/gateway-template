@@ -42,8 +42,11 @@ Client --> Gateway (:8080) --> Backend Agent
              +-- /v1/files             (GET pass-through, list)
              +-- /v1/files/{file_id}   (GET/DELETE pass-through)
              +-- /v1/agent-info        (GET, pass-through to backend)
+             +-- /v1/video/preprocess   (POST, sidecar proxy; when SIDECAR_VIDEO_URL set)
+             +-- /v1/audio/transcriptions (POST, STT sidecar; when SIDECAR_STT_URL set)
+             +-- /v1/audio/speech      (POST, TTS sidecar; when SIDECAR_TTS_URL set)
              +-- /healthz              (GET, liveness)
-             +-- /readyz               (GET, checks backend)
+             +-- /readyz               (GET, checks backend + sidecars)
              +-- /.well-known/agent.json (GET, agent card)
 
 Middleware stack (outside-in):
@@ -102,6 +105,12 @@ Key packages:
 | `GATEWAY_FILES_UPLOAD_TIMEOUT` | No | `5m` | Per-request timeout for backend `POST /v1/files` calls. Larger than the chat-completion timeout so big uploads on slow links don't trip the gateway-side deadline before the agent finishes parsing. |
 | `GATEWAY_RATE_LIMIT_RPS` | No | `0` (disabled) | Sustained request rate (requests/second) per client IP. Both RPS and BURST must be set to enable rate limiting. Returns 429 with `Retry-After` when exceeded. |
 | `GATEWAY_RATE_LIMIT_BURST` | No | `0` (disabled) | Token bucket capacity per client IP. Must be >= RPS. |
+| `GATEWAY_SIDECAR_VIDEO_URL` | No | -- | Video preprocessor sidecar base URL. Enables `POST /v1/video/preprocess`. |
+| `GATEWAY_SIDECAR_VIDEO_TIMEOUT` | No | `10m` | Per-request timeout for video preprocessing. |
+| `GATEWAY_SIDECAR_VIDEO_MAX_BYTES` | No | `500m` (500 MiB) | Size cap for video preprocessing requests. |
+| `GATEWAY_SIDECAR_STT_URL` | No | -- | STT sidecar base URL. Enables `POST /v1/audio/transcriptions`. |
+| `GATEWAY_SIDECAR_TTS_URL` | No | -- | TTS sidecar base URL. Enables `POST /v1/audio/speech`. |
+| `GATEWAY_SIDECAR_AUDIO_TIMEOUT` | No | `2m` | Per-request timeout for audio processing. |
 | `GATEWAY_BUDGET_DEFAULT_TOKENS` | No | `0` (unlimited) | Default per-tenant token budget. 0 = no enforcement. |
 | `GATEWAY_BUDGET_CONFIG` | No | -- | Path to YAML file with per-tenant budget overrides. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | -- | Standard OTel var. When set, the gateway creates child spans per request and exports via OTLP HTTP. When empty, tracing is no-op. |

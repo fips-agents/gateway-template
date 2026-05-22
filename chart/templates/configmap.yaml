@@ -8,6 +8,24 @@ data:
   {{- range $key, $val := .Values.config }}
   {{ $key }}: {{ $val | quote }}
   {{- end }}
+  {{- with .Values.sidecars.video.url }}
+  GATEWAY_SIDECAR_VIDEO_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.sidecars.video.timeout }}
+  GATEWAY_SIDECAR_VIDEO_TIMEOUT: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.sidecars.video.maxBytes }}
+  GATEWAY_SIDECAR_VIDEO_MAX_BYTES: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.sidecars.stt.url }}
+  GATEWAY_SIDECAR_STT_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.sidecars.tts.url }}
+  GATEWAY_SIDECAR_TTS_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.sidecars.audioTimeout }}
+  GATEWAY_SIDECAR_AUDIO_TIMEOUT: {{ . | quote }}
+  {{- end }}
   {{- if and .Values.budget .Values.budget.defaultTokens }}
   GATEWAY_BUDGET_DEFAULT_TOKENS: {{ .Values.budget.defaultTokens | quote }}
   {{- end }}

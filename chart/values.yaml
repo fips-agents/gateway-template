@@ -110,6 +110,24 @@ auth:
       # means no scope narrowing.
       scope: ""
 
+# -- Sidecar services (gateway-template#14, #13) ------------------------------
+# Optional media-processing sidecars. Routes are registered only when the
+# URL is set. The readiness probe probes configured sidecars in parallel;
+# sidecar failures are logged but don't fail /readyz.
+sidecars:
+  video:
+    # Video preprocessor sidecar (frame extraction). Enables POST /v1/video/preprocess.
+    url: ""
+    timeout: "10m"
+    maxBytes: "500m"
+  stt:
+    # Speech-to-text sidecar. Enables POST /v1/audio/transcriptions.
+    url: ""
+  tts:
+    # Text-to-speech sidecar. Enables POST /v1/audio/speech.
+    url: ""
+  audioTimeout: "2m"
+
 # -- Per-tenant budget enforcement (gateway-template#15) ----------------------
 # Track and enforce per-tenant token budgets. Usage is accumulated in-memory
 # from chat response data (best-effort, resets on restart). The agent's
