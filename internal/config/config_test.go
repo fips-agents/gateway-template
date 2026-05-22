@@ -438,3 +438,180 @@ func TestLoad_TenantEnforce_RejectsAnonymousMode(t *testing.T) {
 		t.Errorf("error = %q, want substring %q", err, want)
 	}
 }
+
+func TestLoad_SidecarConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVars  map[string]string
+		validate func(t *testing.T, cfg *config.Config)
+	}{
+		{
+			name: "video URL parsed",
+			envVars: map[string]string{
+				"BACKEND_URL":               "http://localhost:8081",
+				"GATEWAY_SIDECAR_VIDEO_URL": "http://video-sidecar:8080",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarVideoURL != "http://video-sidecar:8080" {
+					t.Errorf("SidecarVideoURL = %q, want %q", cfg.SidecarVideoURL, "http://video-sidecar:8080")
+				}
+				if !cfg.SidecarVideoEnabled() {
+					t.Error("SidecarVideoEnabled() = false, want true")
+				}
+			},
+		},
+		{
+			name: "STT URL parsed",
+			envVars: map[string]string{
+				"BACKEND_URL":             "http://localhost:8081",
+				"GATEWAY_SIDECAR_STT_URL": "http://stt-sidecar:8080",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarSTTURL != "http://stt-sidecar:8080" {
+					t.Errorf("SidecarSTTURL = %q, want %q", cfg.SidecarSTTURL, "http://stt-sidecar:8080")
+				}
+				if !cfg.SidecarSTTEnabled() {
+					t.Error("SidecarSTTEnabled() = false, want true")
+				}
+			},
+		},
+		{
+			name: "TTS URL parsed",
+			envVars: map[string]string{
+				"BACKEND_URL":             "http://localhost:8081",
+				"GATEWAY_SIDECAR_TTS_URL": "http://tts-sidecar:8080",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarTTSURL != "http://tts-sidecar:8080" {
+					t.Errorf("SidecarTTSURL = %q, want %q", cfg.SidecarTTSURL, "http://tts-sidecar:8080")
+				}
+				if !cfg.SidecarTTSEnabled() {
+					t.Error("SidecarTTSEnabled() = false, want true")
+				}
+			},
+		},
+		{
+			name: "disabled by default",
+			envVars: map[string]string{
+				"BACKEND_URL": "http://localhost:8081",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarVideoEnabled() {
+					t.Error("SidecarVideoEnabled() = true, want false (default)")
+				}
+				if cfg.SidecarSTTEnabled() {
+					t.Error("SidecarSTTEnabled() = true, want false (default)")
+				}
+				if cfg.SidecarTTSEnabled() {
+					t.Error("SidecarTTSEnabled() = true, want false (default)")
+				}
+			},
+		},
+		{
+			name: "video timeout parsed",
+			envVars: map[string]string{
+				"BACKEND_URL":                    "http://localhost:8081",
+				"GATEWAY_SIDECAR_VIDEO_TIMEOUT":  "5m",
+				"GATEWAY_SIDECAR_VIDEO_URL":      "http://video:8080",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarVideoTimeout != 5*time.Minute {
+					t.Errorf("SidecarVideoTimeout = %v, want 5m", cfg.SidecarVideoTimeout)
+				}
+			},
+		},
+		{
+			name: "video max bytes parsed",
+			envVars: map[string]string{
+				"BACKEND_URL":                      "http://localhost:8081",
+				"GATEWAY_SIDECAR_VIDEO_MAX_BYTES":  "1g",
+				"GATEWAY_SIDECAR_VIDEO_URL":        "http://video:8080",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarVideoMaxBytes != 1<<30 {
+					t.Errorf("SidecarVideoMaxBytes = %d, want %d (1 GiB)", cfg.SidecarVideoMaxBytes, 1<<30)
+				}
+			},
+		},
+		{
+			name: "video timeout default",
+			envVars: map[string]string{
+				"BACKEND_URL":               "http://localhost:8081",
+				"GATEWAY_SIDECAR_VIDEO_URL": "http://video:8080",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarVideoTimeout != config.SidecarVideoTimeoutDefault {
+					t.Errorf("SidecarVideoTimeout = %v, want default %v", cfg.SidecarVideoTimeout, config.SidecarVideoTimeoutDefault)
+				}
+			},
+		},
+		{
+			name: "video max bytes default",
+			envVars: map[string]string{
+				"BACKEND_URL":               "http://localhost:8081",
+				"GATEWAY_SIDECAR_VIDEO_URL": "http://video:8080",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarVideoMaxBytes != config.SidecarVideoMaxBytesDefault {
+					t.Errorf("SidecarVideoMaxBytes = %d, want default %d", cfg.SidecarVideoMaxBytes, config.SidecarVideoMaxBytesDefault)
+				}
+			},
+		},
+		{
+			name: "audio timeout parsed",
+			envVars: map[string]string{
+				"BACKEND_URL":                    "http://localhost:8081",
+				"GATEWAY_SIDECAR_AUDIO_TIMEOUT":  "1m",
+				"GATEWAY_SIDECAR_STT_URL":        "http://stt:8080",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarAudioTimeout != 1*time.Minute {
+					t.Errorf("SidecarAudioTimeout = %v, want 1m", cfg.SidecarAudioTimeout)
+				}
+			},
+		},
+		{
+			name: "audio timeout default",
+			envVars: map[string]string{
+				"BACKEND_URL":             "http://localhost:8081",
+				"GATEWAY_SIDECAR_STT_URL": "http://stt:8080",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarAudioTimeout != config.SidecarAudioTimeoutDefault {
+					t.Errorf("SidecarAudioTimeout = %v, want default %v", cfg.SidecarAudioTimeout, config.SidecarAudioTimeoutDefault)
+				}
+			},
+		},
+		{
+			name: "trailing slash trimmed",
+			envVars: map[string]string{
+				"BACKEND_URL":               "http://localhost:8081",
+				"GATEWAY_SIDECAR_VIDEO_URL": "http://video:8080/",
+				"GATEWAY_SIDECAR_STT_URL":   "http://stt:8080/",
+				"GATEWAY_SIDECAR_TTS_URL":   "http://tts:8080/",
+			},
+			validate: func(t *testing.T, cfg *config.Config) {
+				if cfg.SidecarVideoURL != "http://video:8080" {
+					t.Errorf("SidecarVideoURL = %q, want trailing slash trimmed", cfg.SidecarVideoURL)
+				}
+				if cfg.SidecarSTTURL != "http://stt:8080" {
+					t.Errorf("SidecarSTTURL = %q, want trailing slash trimmed", cfg.SidecarSTTURL)
+				}
+				if cfg.SidecarTTSURL != "http://tts:8080" {
+					t.Errorf("SidecarTTSURL = %q, want trailing slash trimmed", cfg.SidecarTTSURL)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := loadWithEnv(t, tc.envVars)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			tc.validate(t, cfg)
+		})
+	}
+}
